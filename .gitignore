@@ -1,0 +1,18 @@
+# Generated / local data — do not track
+data/**
+!data/.gitkeep
+results/**
+!results/.gitkeep
+
+# Local AllenSDK cache symlink (points to /data/AllenNPXVisualBehavior)
+data/visual-behavior-neuropixels
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
