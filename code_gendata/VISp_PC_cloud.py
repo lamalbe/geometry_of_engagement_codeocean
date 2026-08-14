@@ -32,10 +32,10 @@ np.random.seed(51)
 random.seed(51)
 
 # --- Load Sessions ---
-# Day-1 familiar G sessions only.
+# Day-1 familiar sessions (image sets G and H).
 df_sessions = pd.read_pickle(ALLEN_DATA_DIR / 'df_sessions.pk')
 df_sessions = df_sessions.query(
-    'session_number==1 and experience_level=="Familiar" and image_set=="G"'
+    'session_number==1 and experience_level=="Familiar"'
 )
 print(f"Number of filtered sessions: {len(df_sessions)}")
 unique_session_ids = df_sessions.ecephys_session_id.unique()
@@ -377,7 +377,7 @@ def process_pca_two(session_id, svg_flag=False):
 
     df_stimulus = df_activity.loc[
         (df_activity.is_viewing == True)
-        & (df_activity.time_from_stimulus > 0)
+        & (df_activity.time_from_stimulus >= 0.1)
         & (df_activity.is_image_novel == False)
         & (df_activity.is_change == False)
     ].copy()

@@ -216,6 +216,54 @@ def compute_cloud_separation(means_dict, covs_dict):
 
     return avg_separation
 
+
+def compute_subsampled_stats(spikecounts_all, group_metadata, geometry_stats_func, area, group_size=200, random_state=2):
+    """
+    Compute geometry statistics on subsampled groups of trials.
+
+    Parameters:
+        spikecounts_all (np.array): Array of shape (N_trials, N_neurons)
+        group_metadata (dict): Metadata to attach to each result
+        geometry_stats_func (callable): Function to compute geometry stats
+        area (str): Brain area label
+        group_size (int): Size of each subsample group (default: 200)
+        random_state (int): Random seed (not used for ordered subsampling)
+
+    Returns:
+        list: List of dictionaries with geometry statistics for each subsample
+    """
+    N_rows = spikecounts_all.shape[0]
+    N_neurons = spikecounts_all.shape[1]
+
+    is_change_flag = bool(group_metadata.get('is_change', False))
+
+    if is_change_flag:
+        if N_rows == 0:
+            return []
+        chunks = [np.arange(N_rows)]
+    else:
+        n_groups = N_rows // group_size
+        if n_groups == 0:
+            return []
+        chunks = [np.arange(i * group_size, (i + 1) * group_size) for i in range(n_groups)]
+
+    stats_list = []
+    for chunk_idx, idx_chunk in enumerate(chunks):
+        submatrix = spikecounts_all[idx_chunk, :]
+        dict_stats = geometry_stats_func(submatrix.T)
+        if not dict_stats:
+            continue
+        dict_stats.update(group_metadata)
+        dict_stats.update({
+            'area': area,
+            'N': N_neurons,
+            'subsample_id': chunk_idx,
+        })
+        stats_list.append(dict_stats)
+
+    return stats_list
+
+
 def process_session_general(session_id, session_number, experience_level, image_set):
     """
     Process data for a single session to compute VISp geometry statistics
@@ -249,7 +297,7 @@ def process_session_general(session_id, session_number, experience_level, image_
         return pd.DataFrame()
 
     df_activity_ses = df_activity_ses[df_activity_ses.is_viewing == True]
-    df_activity_ses = df_activity_ses[df_activity_ses.time_from_stimulus >= 0.05]
+    df_activity_ses = df_activity_ses[df_activity_ses.time_from_stimulus >= 0.1]
     df_activity_ses = df_activity_ses[df_activity_ses.is_change == False]
     df_activity_ses['image_name'] = pd.Categorical(df_activity_ses['image_name'], ordered=True)
 
@@ -264,7 +312,7 @@ def process_session_general(session_id, session_number, experience_level, image_
         ['session_id', 'active', 'is_image_novel']
     ):
         session_id, active, is_image_novel = outer_group_name
-        all_stats_for_separation = {}
+        all_stats_for_separation = {}  # Key: (image_name, subsample_id)
 
         # observed=True: image_name is Categorical, so the default observed=False
         # would emit empty groups for images that never appear in this outer slice.
@@ -286,29 +334,52 @@ def process_session_general(session_id, session_number, experience_level, image_
             }
 
             spikecounts_all = np.stack(df_activity_group.spikecounts_area.values, axis=0)
-
-            mean_vec = np.mean(spikecounts_all, axis=0)
-            cov_matrix = np.cov(spikecounts_all, rowvar=False)
-
-            dict_stats = geometry_stats(spikecounts_all.T)
-            if not dict_stats:
+            N_rows = spikecounts_all.shape[0]
+            group_size = 200
+            n_groups = N_rows // group_size
+            if n_groups == 0:
                 continue
+            chunks = [np.arange(i * group_size, (i + 1) * group_size) for i in range(n_groups)]
 
-            dict_stats.update(group_keys)
-            dict_stats.update({'area': area, 'N': spikecounts_all.shape[1]})
-            all_stats_for_separation[image_name] = (dict_stats, mean_vec, cov_matrix)
+            for chunk_idx, idx_chunk in enumerate(chunks):
+                submatrix = spikecounts_all[idx_chunk, :]
+                mean_vec = np.mean(submatrix, axis=0)
+                cov_matrix = np.cov(submatrix, rowvar=False)
 
-        if len(all_stats_for_separation) >= 2:
-            means_dict = {name: vals[1] for name, vals in all_stats_for_separation.items()}
-            covs_dict = {name: vals[2] for name, vals in all_stats_for_separation.items()}
-            separations = compute_cloud_separation(means_dict, covs_dict)
-            for img_name, (stats_dict, _, _) in all_stats_for_separation.items():
-                stats_dict['cloud_separation'] = separations[img_name]
-                stats_list.append(stats_dict)
-        else:
-            for img_name, (stats_dict, _, _) in all_stats_for_separation.items():
-                stats_dict['cloud_separation'] = np.nan
-                stats_list.append(stats_dict)
+                dict_stats = geometry_stats(submatrix.T)
+                if not dict_stats:
+                    continue
+
+                dict_stats.update(group_keys)
+                dict_stats.update({
+                    'area': area,
+                    'N': submatrix.shape[1],
+                    'subsample_id': chunk_idx,
+                })
+                all_stats_for_separation[(image_name, chunk_idx)] = (
+                    dict_stats, mean_vec, cov_matrix
+                )
+
+        subsample_ids = set(key[1] for key in all_stats_for_separation.keys())
+        for subsample_id in subsample_ids:
+            means_dict = {}
+            covs_dict = {}
+            image_stats_dict = {}
+            for (img_name, sub_id), (stats_dict, mean, cov) in all_stats_for_separation.items():
+                if sub_id == subsample_id:
+                    means_dict[img_name] = mean
+                    covs_dict[img_name] = cov
+                    image_stats_dict[img_name] = stats_dict
+
+            if len(means_dict) >= 2:
+                separations = compute_cloud_separation(means_dict, covs_dict)
+                for img_name, stats_dict in image_stats_dict.items():
+                    stats_dict['cloud_separation'] = separations[img_name]
+                    stats_list.append(stats_dict)
+            else:
+                for img_name, stats_dict in image_stats_dict.items():
+                    stats_dict['cloud_separation'] = np.nan
+                    stats_list.append(stats_dict)
 
     return pd.DataFrame(stats_list)
 
@@ -325,7 +396,7 @@ if __name__ == '__main__':
 
     df_sessions = pd.read_pickle(ALLEN_DATA_DIR / 'df_sessions.pk')
     df_sessions = df_sessions.query(
-        'session_number==1 and experience_level=="Familiar" and image_set=="G"'
+        'session_number==1 and experience_level=="Familiar"'
     )
 
     session_meta = df_sessions[
@@ -340,3 +411,4 @@ if __name__ == '__main__':
     print(f"Saved {data_dir / 'visp_cloud_shape.pk'}")
 # %%
 load_df = pd.read_pickle(data_dir / 'visp_cloud_shape.pk')
+# %%

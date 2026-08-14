@@ -57,6 +57,49 @@ def cov_stats(spkcounts):
     return dict_stats
 
 
+def compute_subsampled_stats(spikecounts_all, group_metadata, cov_stats_func, area, group_size=200, random_state=2, speed_all=None, pupil_all=None):
+
+    N_rows = spikecounts_all.shape[0]
+    N_neurons = spikecounts_all.shape[1]
+
+    is_change_flag = bool(group_metadata.get('is_change', False))
+
+    if is_change_flag:
+        if N_rows == 0:
+            return []
+        chunks = [np.arange(N_rows)]
+    else:
+        n_groups = N_rows // group_size
+        if n_groups == 0:
+            return []
+        chunks = [np.arange(i * group_size, (i + 1) * group_size) for i in range(n_groups)]
+
+    stats_list = []
+    for chunk_idx, idx_chunk in enumerate(chunks):
+        submatrix = spikecounts_all[idx_chunk, :]
+        avgspikecounts = np.mean(submatrix, axis=0)
+        dict_stats = cov_stats_func(submatrix.T)
+
+        speed_chunk = speed_all[idx_chunk] if speed_all is not None else None
+        pupil_chunk = pupil_all[idx_chunk] if pupil_all is not None else None
+
+        dict_stats.update(group_metadata)
+        dict_stats.update({
+            'area': area,
+            'N': N_neurons,
+            'avgspikecounts': [avgspikecounts],
+            'subsample_id': chunk_idx,
+        })
+        if speed_chunk is not None:
+            dict_stats['speed_values'] = [speed_chunk.astype(float)]
+        if pupil_chunk is not None:
+            dict_stats['pupil_values'] = [pupil_chunk.astype(float)]
+
+        stats_list.append(dict_stats)
+
+    return stats_list
+
+
 def process_session_general(session_id, session_number, experience_level, image_set):
 
     session_str = str(session_id)
@@ -73,7 +116,7 @@ def process_session_general(session_id, session_number, experience_level, image_
     print(f"N: {len(df_units_ses)} and spikes: {len(df_activity_ses.iloc[0]['spikecounts'])}")
 
     df_activity_ses = df_activity_ses[df_activity_ses.is_viewing == True]
-    df_activity_ses = df_activity_ses[df_activity_ses.time_from_stimulus >= 0.05]
+    df_activity_ses = df_activity_ses[df_activity_ses.time_from_stimulus >= 0.1]
     df_activity_ses = df_activity_ses[df_activity_ses.is_change == False]
     df_activity_ses['image_name'] = pd.Categorical(df_activity_ses['image_name'], ordered=True)
 
@@ -118,18 +161,15 @@ def process_session_general(session_id, session_number, experience_level, image_
             spikecounts_all = np.stack(df_activity_group.spikecounts_area.values, axis=0)
             speed_all = df_activity_group['mean_speed'].to_numpy(dtype=float)
             pupil_all = df_activity_group['mean_pupil_area'].to_numpy(dtype=float)
-
-            avgspikecounts = np.mean(spikecounts_all, axis=0)
-            dict_stats = cov_stats(spikecounts_all.T)
-            dict_stats.update(group_keys)
-            dict_stats.update({
-                'area': area,
-                'N': spikecounts_all.shape[1],
-                'avgspikecounts': [avgspikecounts],
-                'speed_values': [speed_all.astype(float)],
-                'pupil_values': [pupil_all.astype(float)],
-            })
-            stats_list.append(dict_stats)
+            area_stats_list = compute_subsampled_stats(
+                spikecounts_all,
+                group_keys,
+                cov_stats_func=cov_stats,
+                area=area,
+                speed_all=speed_all,
+                pupil_all=pupil_all,
+            )
+            stats_list.extend(area_stats_list)
 
     return pd.DataFrame(stats_list)
 
@@ -146,7 +186,7 @@ if __name__ == '__main__':
 
     df_sessions = pd.read_pickle(ALLEN_DATA_DIR / 'df_sessions.pk')
     df_sessions = df_sessions.query(
-        'session_number==1 and experience_level=="Familiar" and image_set=="G"'
+        'session_number==1 and experience_level=="Familiar"'
     )
 
     session_meta = df_sessions[
