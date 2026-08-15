@@ -62,6 +62,52 @@ if "subsample_id" not in df_stats.columns:
 # Set to True to save plots as PDF in results folder, False to only show plots
 SAVE_PLOTS = False
 
+
+def get_asterisk(p_value):
+    """Convert p-value to asterisk notation."""
+    if np.isnan(p_value):
+        return ""
+    if p_value < 0.001:
+        return "***"
+    if p_value < 0.01:
+        return "**"
+    if p_value < 0.05:
+        return "*"
+    return ""
+
+
+def _y_offset_for_annotations(y_series, frac=0.03):
+    y = y_series.dropna()
+    if y.empty:
+        return 0.1
+    span = y.max() - y.min()
+    return frac * span if span > 0 else 0.1
+
+
+def _annotate_one_sample_vs_mu(ax, data, y_col, categories, mu=1.0, category_col="area"):
+    """Black asterisk above each category (two-sided one-sample t-test vs mu)."""
+    y_offset = _y_offset_for_annotations(data[y_col])
+    for i, category in enumerate(categories):
+        vals = data.loc[data[category_col] == category, y_col].dropna()
+        p = np.nan
+        if len(vals) > 1:
+            _, p = stats.ttest_1samp(vals, mu)
+        ast = get_asterisk(p)
+        if not ast:
+            continue
+        box_y = vals.quantile(0.75) + y_offset
+        ax.text(
+            i, box_y, ast,
+            ha="center", va="bottom", color="black",
+            fontsize=10, fontweight="bold", clip_on=True,
+        )
+
+
+def _pad_ylim_for_asterisks(ax):
+    ymin, ymax = ax.get_ylim()
+    pad = 0.08 * (ymax - ymin) if ymax > ymin else 0.1
+    ax.set_ylim(ymin, ymax + pad)
+
 # %%
 # -------------------------------------------------------------------------------------------------
 # ACTIVE/PASSIVE RATIO BY AREA (LGd, VISpl, VISm, SCMRN)
@@ -124,6 +170,10 @@ if not df_ratio_areas.empty:
         )
         for ax in g_ratio.axes.flat:
             ax.axhline(1, color='black', linestyle='--', linewidth=0.8, zorder=0)
+            _annotate_one_sample_vs_mu(
+                ax, df_plot_ratio, 'ratio', box_area_order, mu=1.0, category_col='area',
+            )
+            _pad_ylim_for_asterisks(ax)
 
         if SAVE_PLOTS:
             g_ratio.figure.savefig(
@@ -198,6 +248,10 @@ if not df_ratio_vis_areas.empty:
         )
         for ax in g_ratio.axes.flat:
             ax.axhline(1, color='black', linestyle='--', linewidth=0.8, zorder=0)
+            _annotate_one_sample_vs_mu(
+                ax, df_plot_ratio, 'ratio', visual_cortex_areas, mu=1.0, category_col='area',
+            )
+            _pad_ylim_for_asterisks(ax)
 
         if SAVE_PLOTS:
             g_ratio.figure.savefig(

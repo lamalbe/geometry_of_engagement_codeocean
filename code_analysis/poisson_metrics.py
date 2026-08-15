@@ -37,7 +37,7 @@ POISSON_EXAMPLE_NEURONS = {
     "VISp": 43,
 }
 
-SAVE_PLOTS = True  # Set to True to save plots as PDF in results folder
+SAVE_PLOTS = False  # Set to True to save plots as PDF in results folder
 SAVE_DPI = 300
 
 try:
@@ -157,14 +157,16 @@ def _annotate_one_sample_vs_mu(ax, data, y_col, areas, mu=1.0, area_col="area"):
         )
 
 
-def catplot_area_stats(data, y, kind, test, marker=None, mu=1.0, **catplot_kw):
+def catplot_area_stats(data, y, kind, test, marker=None, mu=1.0, area_order=None, **catplot_kw):
     """
     Catplot with fixed area order and significance asterisks.
 
     test: 'two_sample' (active vs passive) or 'one_sample' (vs mu, default 1).
+    area_order: optional override of AREA_ORDER for this plot only.
     """
-    plot_df = data[data["area"].isin(AREA_ORDER)].copy()
-    areas = areas_present(plot_df)
+    order = AREA_ORDER if area_order is None else list(area_order)
+    plot_df = data[data["area"].isin(order)].copy()
+    areas = areas_present(plot_df, order=order)
     plot_df["area"] = pd.Categorical(plot_df["area"], categories=areas, ordered=True)
 
     base_kw = dict(
@@ -179,6 +181,8 @@ def catplot_area_stats(data, y, kind, test, marker=None, mu=1.0, **catplot_kw):
     elif test == "one_sample":
         g = sns.catplot(**base_kw)
         _annotate_one_sample_vs_mu(g.axes.flat[0], plot_df, y, areas, mu=mu)
+        for ax in g.axes.flat:
+            ax.axhline(mu, color="black", linestyle="--", linewidth=0.8, zorder=0)
     else:
         raise ValueError(f"Unknown test: {test}")
 
@@ -284,85 +288,93 @@ for metric in ratio_metrics:
         wide[(metric, True)] / wide[(metric, False)]
     ).values
 
-df_stats_ap_ratio["R_TR_combo_1"] = (
+df_stats_ap_ratio["gain_power_law"] = (
     df_stats_ap_ratio["R_emp_ratio"] ** (4 / 3)
     / df_stats_ap_ratio["TR_emp_ratio"] ** (2 / 9)
 )
-df_stats_ap_ratio["R_TR_combo_2"] = (
+df_stats_ap_ratio["gain_exponential"] = (
     df_stats_ap_ratio["R_emp_ratio"] ** 2
     / df_stats_ap_ratio["TR_emp_ratio"]
 )
-# %%
-sns.catplot(data=df_stats_ap_ratio, x="area", y="R_emp_ratio", kind="box")
-sns.catplot(data=df_stats_ap_ratio, x="area", y="R_TR_combo_1", kind="box")
-sns.catplot(data=df_stats_ap_ratio, x="area", y="R_TR_combo_2", kind="box")
 
-sns.displot(data=df_stats_ap_ratio, x="R_TR_combo_1", hue="area", kind="kde")
-sns.displot(data=df_stats_ap_ratio, x="R_TR_combo_2", hue="area", kind="kde")
 # %%
+ANGULAR_AREA_ORDER = ["VISp", "LGd", "VISpl", "VISm", "SCMRN"]
+
 g_cat_angular = catplot_area_stats(
-    df_poisson_stats, y="angular_coefficient", kind="point", test="two_sample", marker="o",
+    df_poisson_stats,
+    y="angular_coefficient",
+    kind="point",
+    test="two_sample",
+    marker="o",
+    area_order=ANGULAR_AREA_ORDER,
 )
 save_plot(g_cat_angular.fig, "catplot_angular_coefficient.pdf")
 
-sns.displot(data=df_poisson_stats, x="angular_coefficient", hue="active", kind="kde", row="area")
-
-# g_cat_tian = catplot_area_stats(
-#     df_poisson_stats, y="tian_angular_coefficient", kind="point", test="two_sample", marker="D",
-# )
-#save_plot(g_cat_tian.fig, "catplot_tian_angular_coefficient.pdf")
-
-g_cat_a_sparsity = catplot_area_stats(df_poisson_stats, y="a_sparsity", kind="box", test="two_sample")
-save_plot(g_cat_a_sparsity.fig, "catplot_a_sparsity.pdf")
-
-_df_var_sparsity = df_poisson_stats[df_poisson_stats["area"].isin(AREA_ORDER)].dropna(
-    subset=["var_sparsity_ratio"]
-).copy()
-_var_sparsity_areas = areas_present(_df_var_sparsity)
-_df_var_sparsity["area"] = pd.Categorical(
-    _df_var_sparsity["area"], categories=_var_sparsity_areas, ordered=True
-)
-# Per-area palette_map: one stripplot per area (catplot uses a single hue palette).
-_fig_var_sparsity, _ax_var_sparsity = plt.subplots(
-    figsize=(max(7.0, 1.15 * len(_var_sparsity_areas)), 4)
-)
-for _area in _var_sparsity_areas:
-    _sub_area = _df_var_sparsity[_df_var_sparsity["area"] == _area]
-    if _sub_area.empty:
-        continue
-    sns.stripplot(
-        data=_sub_area,
-        x="area",
-        y="var_sparsity_ratio",
-        hue="active",
-        hue_order=[True, False],
-        order=_var_sparsity_areas,
-        palette=palette_for_area(_area),
-        dodge=True,
-        ax=_ax_var_sparsity,
-        alpha=0.6,
-        size=4,
-        jitter=True,
-        legend=False,
+df_ang_ap = (
+    df_poisson_stats[df_poisson_stats["area"].isin(ANGULAR_AREA_ORDER)]
+    .pivot_table(
+        index=["session_id", "image_name", "area"],
+        columns="active",
+        values="angular_coefficient",
+        aggfunc="mean",
     )
-_ax_var_sparsity.axhline(1.0, ls="--", c="k", lw=1, zorder=0)
-_ax_var_sparsity.set_ylabel(
-    r"spikecount_var_sparsity / ($TR_{emp} \times a_{sparsity}$)"
+    .reset_index()
+    .rename(columns={False: "passive", True: "active"})
 )
-_fig_var_sparsity.suptitle(
-    r"Variance sparsity ratio (theory: $y = 1$)",
+df_ang_ap = df_ang_ap.dropna(subset=["passive", "active"])
+_ang_areas = [a for a in ANGULAR_AREA_ORDER if a in set(df_ang_ap["area"])]
+
+g_ang_scatter = sns.FacetGrid(
+    df_ang_ap,
+    col="area",
+    col_order=_ang_areas,
+    height=3.2,
+    aspect=1.0,
+)
+_ang_vals = pd.concat([df_ang_ap["passive"], df_ang_ap["active"]], ignore_index=True).dropna()
+if _ang_vals.empty:
+    _ang_low, _ang_high = 0.0, 1.0
+else:
+    _ang_pad = 0.05 * (_ang_vals.max() - _ang_vals.min()) if _ang_vals.max() > _ang_vals.min() else 0.1
+    _ang_low = float(_ang_vals.min()) - _ang_pad
+    _ang_high = float(_ang_vals.max()) + _ang_pad
+
+for ax, area in zip(g_ang_scatter.axes.flat, _ang_areas):
+    sub = df_ang_ap[df_ang_ap["area"] == area]
+    sns.scatterplot(
+        data=sub,
+        x="passive",
+        y="active",
+        ax=ax,
+        color=palette_for_area(area)[True],
+        alpha=0.7,
+        s=28,
+        edgecolor="black",
+        linewidth=0.3,
+    )
+    ax.plot([_ang_low, _ang_high], [_ang_low, _ang_high], ls="--", c="k", lw=1, zorder=0)
+    ax.set_xlim(_ang_low, _ang_high)
+    ax.set_ylim(_ang_low, _ang_high)
+    ax.set_xlabel("Passive")
+    ax.set_ylabel("Active")
+    ax.set_title(area)
+    ax.set_aspect("equal", adjustable="box")
+
+g_ang_scatter.fig.subplots_adjust(top=0.82)
+g_ang_scatter.fig.suptitle(
+    "Angular coefficient: active vs passive (dashed y = x)",
     y=1.02,
 )
-_fig_var_sparsity.tight_layout()
 save_plot(
-    _fig_var_sparsity,
-    "catplot_var_sparsity_ratio.pdf",
+    g_ang_scatter.fig,
+    "scatter_angular_coefficient_active_vs_passive.pdf",
     rasterize_scatter=True,
 )
 
-# sns.displot(data=df_poisson_stats, x="angular_coefficient", hue="active", kind="hist", row="area")
-# sns.catplot(data=df_poisson_stats, x="area", y="R_emp", hue="active", kind="box")
-# sns.displot(data=df_poisson_stats, x="R_emp", hue="active", kind="kde", row="area")
+# sns.displot(data=df_poisson_stats, x="angular_coefficient", hue="active", kind="kde", row="area")
+# g_cat_a_sparsity = catplot_area_stats(df_poisson_stats, y="a_sparsity", kind="box", test="two_sample")
+# save_plot(g_cat_a_sparsity.fig, "catplot_a_sparsity.pdf")
+
 # %%
 for area_id in df_poisson_stats.area.unique():
     df_stats_area = df_poisson_stats[df_poisson_stats.area == area_id]
@@ -395,27 +407,52 @@ for area_id in df_poisson_stats.area.unique():
     plt.show()
 
 # %%
+RATIO_BOX_HEIGHT = 4
+RATIO_BOX_ASPECT = 1.2
+
 g_cat_tian_ratio = catplot_area_stats(
-    df_stats_ap_ratio, y="angular_coefficient_ratio", kind="box", test="one_sample", mu=1.0,
+    df_stats_ap_ratio,
+    y="angular_coefficient_ratio",
+    kind="box",
+    test="one_sample",
+    mu=1.0,
+    height=RATIO_BOX_HEIGHT,
+    aspect=RATIO_BOX_ASPECT,
 )
 save_plot(g_cat_tian_ratio.fig, "catplot_angular_coefficient_ratio.pdf")
 
 g_cat_a_sparsity_ratio = catplot_area_stats(
-    df_stats_ap_ratio, y="a_sparsity_ratio", kind="box", test="one_sample", mu=1.0,
+    df_stats_ap_ratio,
+    y="a_sparsity_ratio",
+    kind="box",
+    test="one_sample",
+    mu=1.0,
+    height=RATIO_BOX_HEIGHT,
+    aspect=RATIO_BOX_ASPECT,
 )
 save_plot(g_cat_a_sparsity_ratio.fig, "catplot_a_sparsity_ratio.pdf")
 
-g_cat_r_tr_combo_1 = catplot_area_stats(
-    df_stats_ap_ratio, y="R_TR_combo_1", kind="box", test="one_sample", mu=1.0,
+g_cat_gain_power_law = catplot_area_stats(
+    df_stats_ap_ratio,
+    y="gain_power_law",
+    kind="box",
+    test="one_sample",
+    mu=1.0,
+    height=RATIO_BOX_HEIGHT,
+    aspect=RATIO_BOX_ASPECT,
 )
-save_plot(g_cat_r_tr_combo_1.fig, "catplot_R_TR_combo_1.pdf")
+save_plot(g_cat_gain_power_law.fig, "catplot_gain_power_law.pdf")
 
-g_cat_r_tr_combo_2 = catplot_area_stats(
-    df_stats_ap_ratio, y="R_TR_combo_2", kind="box", test="one_sample", mu=1.0,
+g_cat_gain_exponential = catplot_area_stats(
+    df_stats_ap_ratio,
+    y="gain_exponential",
+    kind="box",
+    test="one_sample",
+    mu=1.0,
+    height=RATIO_BOX_HEIGHT,
+    aspect=RATIO_BOX_ASPECT,
 )
-save_plot(g_cat_r_tr_combo_2.fig, "catplot_R_TR_combo_2.pdf")
-
-sns.displot(data=df_stats_ap_ratio, x="angular_coefficient_ratio", hue="area", kind="kde")
+save_plot(g_cat_gain_exponential.fig, "catplot_gain_exponential.pdf")
 
 # %%
 # Toy: PR/(d(a)D(r)) RHS = (1 - g^2 * r_bar)^2 (active r_bar < passive r_bar => active curve above)
@@ -444,32 +481,6 @@ ax_rhs_toy.set_ylabel(r"$(1 - g^2 \bar{r})^2$")
 ax_rhs_toy.set_title("Angular coefficient RHS (toy)")
 ax_rhs_toy.legend()
 save_plot(fig_rhs_toy, "angular_coefficient_RHS_toy.pdf")
-
-# %%
-ax = sns.scatterplot(
-    data=df_poisson_stats[df_poisson_stats.area.isin(['VISp'])],
-    y="PR_emp",
-    x="RHS",
-    hue="active",
-)
-
-# Set same range for x and y axis
-xmin, xmax = ax.get_xlim()
-ymin, ymax = ax.get_ylim()
-low = min(xmin, ymin)
-high = max(xmax, ymax)
-ax.set_xlim(low, high)
-ax.set_ylim(low, high)
-# Add y=x line
-ax.plot([low, high], [low, high], ls="--", c="k", lw=1, zorder=0)
-
-ax = sns.displot(
-    data=df_poisson_stats[df_poisson_stats.area.isin(['VISp'])],
-    y="PR_emp",
-    x="TR_emp",
-    hue="active",
-    kind="kde",
-)
 
 # %%
 # ------------------------
