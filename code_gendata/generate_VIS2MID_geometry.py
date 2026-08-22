@@ -21,7 +21,7 @@ from scipy.optimize import linear_sum_assignment
 #  CONFIG
 # -------------
 TOP_K = 10
-MIN_NEURONS_CHANNEL = 50
+MIN_NEURONS_CHANNEL = 30
 VAR_EPS = 1e-12
 
 CHANNELS: Tuple[Tuple[str, str], ...] = (
@@ -61,7 +61,7 @@ def load_filtered_activity(activity_path: Optional[Path] = None) -> pd.DataFrame
         & (df_activity.is_image_novel == False)
         & (df_activity.is_change == False)
         & (df_activity.time_from_stimulus >= TIME_FROM_STIMULUS_MIN)
-        & (df_activity.N >= 50)
+        & (df_activity.N >= MIN_NEURONS_CHANNEL)
         & (df_activity.area.isin(TARGET_AREAS))
     )
     return df_activity[data_filter].drop(data_filter_columns_dropped, axis=1).copy()

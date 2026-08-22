@@ -42,6 +42,31 @@ df_stats = df_stats.drop(['PR_fit'], axis=1, errors='ignore')
 df_stats['rates'] = df_stats['avgspikecounts'].apply(lambda x: x[0] / 0.05)
 df_stats['rbar'] = df_stats['rates'].apply(lambda x: np.mean(x))
 df_stats['TR_emp'] = df_stats.apply(lambda row: (np.mean(row['rates'])**2) / np.mean(row['rates']**2), axis=1)
+
+
+def _a_sparsity_from_rates_variances(rates, variances):
+    """Treves–Rolls sparsity of per-neuron C_ii / r_i (poisson_metrics a_sparsity)."""
+    rates = np.asarray(rates, dtype=float).ravel()
+    if isinstance(variances, (list, tuple)):
+        variances = variances[0] if len(variances) else np.array([])
+    variances = np.asarray(variances, dtype=float).ravel()
+    if rates.size == 0 or np.all(rates == 0):
+        return np.nan
+    a = np.divide(
+        variances, rates,
+        out=np.zeros_like(rates, dtype=float),
+        where=rates > 0,
+    )
+    denom = np.mean(a ** 2)
+    if denom == 0 or not np.isfinite(denom):
+        return np.nan
+    return float((np.mean(a) ** 2) / denom)
+
+
+df_stats['a_sparsity'] = df_stats.apply(
+    lambda row: _a_sparsity_from_rates_variances(row['rates'], row['variances']),
+    axis=1,
+)
 df_stats = df_stats.drop(['avgspikecounts', 'rates', 'variances'], axis=1)
 
 if "subsample_id" not in df_stats.columns:
@@ -60,7 +85,7 @@ if "subsample_id" not in df_stats.columns:
 # CONFIGURATION FLAG
 # ---------------------------------------------------------------
 # Set to True to save plots as PDF in results folder, False to only show plots
-SAVE_PLOTS = False
+SAVE_PLOTS = True
 
 
 def get_asterisk(p_value):
@@ -108,14 +133,59 @@ def _pad_ylim_for_asterisks(ax):
     pad = 0.08 * (ymax - ymin) if ymax > ymin else 0.1
     ax.set_ylim(ymin, ymax + pad)
 
+
+def _style_filled_boxes(bp, box_colors):
+    """Filled boxes with black edges (visual-cortex by-area boxplot style)."""
+    for patch, color in zip(bp["boxes"], box_colors):
+        patch.set_facecolor(color)
+        patch.set_edgecolor("black")
+        patch.set_linewidth(1.5)
+        patch.set_alpha(0.7)
+    for i in range(len(box_colors)):
+        bp["whiskers"][i * 2].set_color("black")
+        bp["whiskers"][i * 2 + 1].set_color("black")
+        bp["whiskers"][i * 2].set_linewidth(1.5)
+        bp["whiskers"][i * 2 + 1].set_linewidth(1.5)
+        bp["caps"][i * 2].set_color("black")
+        bp["caps"][i * 2 + 1].set_color("black")
+        bp["caps"][i * 2].set_linewidth(1.5)
+        bp["caps"][i * 2 + 1].set_linewidth(1.5)
+    for median in bp["medians"]:
+        median.set_color("black")
+        median.set_linewidth(1.5)
+    for flier in bp.get("fliers", []):
+        flier.set_markerfacecolor("white")
+        flier.set_markeredgecolor("black")
+        flier.set_markersize(5)
+        flier.set_alpha(0.8)
+        flier.set_marker("o")
+
+
+def _ratio_ylim(vals, pad_frac=0.1):
+    vals = pd.Series(vals).dropna()
+    if vals.empty:
+        return 0.0, 2.0
+    y_min, y_max = float(vals.min()), float(vals.max())
+    y_min = min(y_min, 1.0)
+    y_max = max(y_max, 1.0)
+    span = y_max - y_min
+    pad = pad_frac * span if span > 0 else 0.1
+    return y_min - pad, y_max + pad
+
 # %%
 # -------------------------------------------------------------------------------------------------
 # ACTIVE/PASSIVE RATIO BY AREA (LGd, VISpl, VISm, SCMRN)
 # -------------------------------------------------------------------------------------------------
 box_area_order = ['LGd', 'VISpl', 'VISm', 'SCMRN']
-metrics_ratio = ['rbar', 'TR_emp', 'PR_emp']
+metrics_ratio = ['rbar', 'TR_emp', 'PR_emp', 'a_sparsity']
 ratio_keys = ['session_id', 'image_name', 'area']
 avg_group_cols = ['session_id', 'image_name', 'active', 'area']
+circuit_box_colors = {
+    'LGd': '#D679AD',
+    'VISpl': '#53BBF7',
+    'VISm': '#0079BC',
+    'SCMRN': '#F0A600',
+}
 
 df_ratio_areas = df_stats.copy()
 df_ratio_areas = df_ratio_areas[
@@ -147,41 +217,63 @@ if not df_ratio_areas.empty:
         ).reset_index()
         df_pivot['ratio'] = df_pivot[True] / df_pivot[False]
         df_plot_ratio = df_pivot[ratio_keys + ['ratio']].copy()
+        df_plot_ratio = df_plot_ratio[
+            df_plot_ratio['ratio'].notna() & np.isfinite(df_plot_ratio['ratio'])
+        ]
         df_plot_ratio['area'] = pd.Categorical(
             df_plot_ratio['area'],
             categories=box_area_order,
             ordered=True,
         )
 
-        g_ratio = sns.catplot(
-            data=df_plot_ratio,
-            x='area',
-            y='ratio',
-            kind='box',
-            order=box_area_order,
-            height=4,
-            aspect=1.2,
+        box_data, box_colors, tick_labels = [], [], []
+        for area in box_area_order:
+            vals = df_plot_ratio.loc[df_plot_ratio['area'] == area, 'ratio'].dropna().to_numpy()
+            if len(vals) == 0:
+                continue
+            box_data.append(vals)
+            box_colors.append(circuit_box_colors[area])
+            tick_labels.append(area)
+        if not box_data:
+            continue
+
+        y_lim = _ratio_ylim(np.concatenate(box_data))
+        fig, ax = plt.subplots(figsize=(8, 5))
+        bp = ax.boxplot(
+            box_data,
+            positions=range(len(box_data)),
+            widths=0.6,
+            patch_artist=True,
+            showfliers=True,
+            zorder=2,
         )
-        g_ratio.set_ylabels(f'Active / Passive Ratio ({metric})')
-        g_ratio.set_xlabels('Area')
-        g_ratio.figure.suptitle(
+        _style_filled_boxes(bp, box_colors)
+        ax.set_xticks(range(len(box_data)))
+        ax.set_xticklabels(tick_labels, rotation=45, ha='right')
+        ax.set_xlabel('Area')
+        ax.set_ylabel(f'Active / Passive Ratio ({metric})')
+        ax.set_ylim(y_lim)
+        ax.set_xlim(-0.5, len(box_data) - 0.5)
+        ax.grid(axis='y', linestyle='--', alpha=0.2)
+        ax.axhline(1, color='black', linestyle='--', linewidth=0.8, alpha=0.5, zorder=0)
+        _annotate_one_sample_vs_mu(
+            ax, df_plot_ratio, 'ratio', tick_labels, mu=1.0, category_col='area',
+        )
+        _pad_ylim_for_asterisks(ax)
+        fig.suptitle(
             f'Active vs Passive Ratio: {metric} (averaged over subsamples)',
             y=1.02,
         )
-        for ax in g_ratio.axes.flat:
-            ax.axhline(1, color='black', linestyle='--', linewidth=0.8, zorder=0)
-            _annotate_one_sample_vs_mu(
-                ax, df_plot_ratio, 'ratio', box_area_order, mu=1.0, category_col='area',
-            )
-            _pad_ylim_for_asterisks(ax)
+        fig.tight_layout()
 
         if SAVE_PLOTS:
-            g_ratio.figure.savefig(
+            fig.savefig(
                 output_dir / f"ratio_box_{'-'.join(box_area_order)}_{metric}.pdf",
-                format="pdf",
-                bbox_inches="tight",
+                format='pdf',
+                bbox_inches='tight',
+                dpi=300,
             )
-            plt.close(g_ratio.figure)
+            plt.close(fig)
         else:
             plt.show()
 
@@ -417,7 +509,6 @@ for inter_area in inter_area_combinations:
     # Get the palette for this specific combination
     palette_inter = palette_map[tuple(inter_area)]
     df_plot = df_stats.copy()
-    df_plot = df_plot.drop(['rbar'],axis=1)
     df_plot = df_plot[df_plot.area.isin(inter_area)]
     df_plot = df_plot[df_plot.N >= 30]
     df_plot = df_plot[df_plot.image_name != 'omitted']
@@ -428,7 +519,7 @@ for inter_area in inter_area_combinations:
     df_plot = df_plot[df_plot.session_id.isin(valid_sessions[valid_sessions].index)]
 
     keys = ['session_id', 'active', 'image_name', 'subsample_id']
-    metrics = ['mii', 'mij', 'sii', 'sij', 'TV_emp', 'PR_emp']
+    metrics = ['mii', 'mij', 'sii', 'sij', 'TV_emp', 'PR_emp', 'rbar']
 
     # Pivot directly: one column per (metric, area)
     df_pivot = df_plot.pivot(index=keys, columns='area', values=metrics)
@@ -442,6 +533,7 @@ for inter_area in inter_area_combinations:
         ('TV_emp', 'mii'),
         # ('TV_emp', 'PR_emp'),
         ('PR_emp', 'PR_emp'),
+        ('rbar', 'rbar'),
         # Add more metric pairs here in the future
     ]
 
@@ -784,12 +876,17 @@ if ratio_data_vis:
             joint_box.ax_joint.set_xlim(-0.5, max(n_xticks - 0.5, 0.5))
             joint_box.ax_joint.grid(axis='y', linestyle='--', alpha=0.2)
             joint_box.ax_joint.axhline(1, color='black', linestyle='--', linewidth=0.8, alpha=0.5)
+            _annotate_one_sample_vs_mu(
+                joint_box.ax_joint, df_metric_vis, 'ratio', tick_labels,
+                mu=1.0, category_col=category_col,
+            )
+            _pad_ylim_for_asterisks(joint_box.ax_joint)
 
             joint_box.ax_marg_x.set_visible(False)
             joint_box.ax_marg_y.set_xlabel('Density')
             joint_box.ax_marg_y.set_ylabel('')
             joint_box.ax_marg_y.grid(axis='y', linestyle='--', alpha=0.2)
-            joint_box.ax_marg_y.set_ylim(y_lim)
+            joint_box.ax_marg_y.set_ylim(joint_box.ax_joint.get_ylim())
 
             joint_box.fig.suptitle(
                 f'Visual Cortex: Active/Passive Ratio ({metric}) by {title_by} — Boxplot + Jointplot',
@@ -855,6 +952,11 @@ if ratio_data_vis:
             ax.set_xlim(-0.5, len(box_data) - 0.5)
             ax.grid(axis='y', linestyle='--', alpha=0.2)
             ax.axhline(1, color='black', linestyle='--', linewidth=0.8, alpha=0.5)
+            _annotate_one_sample_vs_mu(
+                ax, df_metric_vis, 'ratio', tick_labels,
+                mu=1.0, category_col=category_col,
+            )
+            _pad_ylim_for_asterisks(ax)
             fig.suptitle(
                 f'Visual Cortex: Active/Passive Ratio ({metric}) by {title_by} — Boxplot',
                 y=1.02,

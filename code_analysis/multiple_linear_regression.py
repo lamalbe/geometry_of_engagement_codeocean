@@ -95,6 +95,35 @@ def get_asterisk(p_value):
         return ""
 
 
+def _style_seaborn_box_artists(ax):
+    """Black 1.5 pt box/whisker/median lines; white fliers (visual-cortex by-image style)."""
+    for patch in ax.patches:
+        if not hasattr(patch, "set_edgecolor"):
+            continue
+        facecolor = patch.get_facecolor()
+        patch.set_edgecolor("black")
+        patch.set_linewidth(1.5)
+        patch.set_alpha(0.7)
+        if len(facecolor) >= 3:
+            patch.set_facecolor((*facecolor[:3], 0.7))
+    for line in ax.lines:
+        line.set_color("black")
+        line.set_linewidth(1.5)
+        marker = line.get_marker()
+        if marker not in (None, "None", ""):
+            line.set_marker("o")
+            line.set_markerfacecolor("white")
+            line.set_markeredgecolor("black")
+            line.set_markersize(5)
+            line.set_alpha(0.8)
+    for collection in ax.collections:
+        collection.set_facecolor("white")
+        collection.set_edgecolor("black")
+        collection.set_linewidth(0.8)
+        collection.set_alpha(0.8)
+        collection.set_sizes([25])
+
+
 def compute_significance_stats(df_coef_sessions, value_col="coef"):
     """
     Compute p-values for:
@@ -182,6 +211,7 @@ def plot_coefficients_by_active(
         palette=ACTIVE_PALETTE,
         ax=ax,
     )
+    _style_seaborn_box_artists(ax)
 
     if strip_flag:
         sns.stripplot(
@@ -688,6 +718,7 @@ if not df_channel_r2_sessions.empty:
     g_channel_r2.set_axis_labels("Channel", "R^2")
     g_channel_r2.fig.suptitle("Channel model R^2 by outcome and block", y=1.03)
     for ax in g_channel_r2.axes.flat:
+        _style_seaborn_box_artists(ax)
         ax.set_ylim(0, 1.0)
         ax.tick_params(axis="x", rotation=20)
     # Relabel legend entries True/False -> active/passive

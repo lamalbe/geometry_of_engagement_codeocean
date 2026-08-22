@@ -16,3 +16,6 @@ __pycache__/
 .eggs/
 dist/
 build/
+
+# Theory script outputs
+code_theory/results/

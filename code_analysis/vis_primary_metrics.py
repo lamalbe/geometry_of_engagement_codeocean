@@ -12,7 +12,7 @@ from scipy import stats
 # CONFIGURATION FLAG
 # ---------------------------------------------------------------
 # Set to True to save plots as PDF in results folder, False to only show plots
-SAVE_PLOTS = False
+SAVE_PLOTS = True
 
 
 def get_asterisk(p_value):
@@ -36,7 +36,9 @@ def _y_offset_for_annotations(y_series, frac=0.03):
     return frac * span if span > 0 else 0.1
 
 
-def _annotate_one_sample_vs_mu(ax, data, y_col, categories, mu=1.0, category_col="area"):
+def _annotate_one_sample_vs_mu(
+    ax, data, y_col, categories, mu=1.0, category_col="area", x_positions=None,
+):
     """Black asterisk above each category (two-sided one-sample t-test vs mu)."""
     y_offset = _y_offset_for_annotations(data[y_col])
     for i, category in enumerate(categories):
@@ -48,8 +50,9 @@ def _annotate_one_sample_vs_mu(ax, data, y_col, categories, mu=1.0, category_col
         if not ast:
             continue
         box_y = vals.quantile(0.75) + y_offset
+        x = x_positions[i] if x_positions is not None else i
         ax.text(
-            i, box_y, ast,
+            x, box_y, ast,
             ha="center", va="bottom", color="black",
             fontsize=10, fontweight="bold", clip_on=True,
         )
@@ -59,6 +62,93 @@ def _pad_ylim_for_asterisks(ax):
     ymin, ymax = ax.get_ylim()
     pad = 0.08 * (ymax - ymin) if ymax > ymin else 0.1
     ax.set_ylim(ymin, ymax + pad)
+
+
+def _style_filled_boxes(bp, box_colors):
+    """Filled boxes with black edges (vis_circuit by-area boxplot style)."""
+    for patch, color in zip(bp["boxes"], box_colors):
+        patch.set_facecolor(color)
+        patch.set_edgecolor("black")
+        patch.set_linewidth(1.5)
+        patch.set_alpha(0.7)
+    for i in range(len(box_colors)):
+        bp["whiskers"][i * 2].set_color("black")
+        bp["whiskers"][i * 2 + 1].set_color("black")
+        bp["whiskers"][i * 2].set_linewidth(1.5)
+        bp["whiskers"][i * 2 + 1].set_linewidth(1.5)
+        bp["caps"][i * 2].set_color("black")
+        bp["caps"][i * 2 + 1].set_color("black")
+        bp["caps"][i * 2].set_linewidth(1.5)
+        bp["caps"][i * 2 + 1].set_linewidth(1.5)
+    for median in bp["medians"]:
+        median.set_color("black")
+        median.set_linewidth(1.5)
+    for flier in bp.get("fliers", []):
+        flier.set_markerfacecolor("white")
+        flier.set_markeredgecolor("black")
+        flier.set_markersize(5)
+        flier.set_alpha(0.8)
+        flier.set_marker("o")
+
+
+def _twin_ylims_sharing_reference(left_vals, right_vals, y_ref=1.0, pad_frac=0.12):
+    """Y-limits for twin axes so *y_ref* sits at the same vertical position on both."""
+    left = np.asarray(left_vals, dtype=float)
+    right = np.asarray(right_vals, dtype=float)
+    left = left[np.isfinite(left)]
+    right = right[np.isfinite(right)]
+    if left.size == 0:
+        left = np.array([y_ref - 0.5, y_ref + 0.5])
+    if right.size == 0:
+        right = np.array([y_ref - 0.5, y_ref + 0.5])
+    lmin, lmax = float(left.min()), float(left.max())
+    rmin, rmax = float(right.min()), float(right.max())
+    lmin, lmax = min(lmin, y_ref), max(lmax, y_ref)
+    rmin, rmax = min(rmin, y_ref), max(rmax, y_ref)
+    lpad = pad_frac * (lmax - lmin) if lmax > lmin else 0.1
+    rpad = pad_frac * (rmax - rmin) if rmax > rmin else 0.1
+    lmin, lmax = lmin - lpad, lmax + lpad
+    rmin, rmax = rmin - rpad, rmax + rpad
+    l_below, l_above = y_ref - lmin, lmax - y_ref
+    r_below, r_above = y_ref - rmin, rmax - y_ref
+    below = max(
+        l_below / (l_below + l_above) if (l_below + l_above) > 0 else 0.5,
+        r_below / (r_below + r_above) if (r_below + r_above) > 0 else 0.5,
+    )
+    above = max(
+        l_above / (l_below + l_above) if (l_below + l_above) > 0 else 0.5,
+        r_above / (r_below + r_above) if (r_below + r_above) > 0 else 0.5,
+    )
+    total = below + above
+    below, above = below / total, above / total
+    l_span = max(
+        l_below / below if below > 0 else 0.0,
+        l_above / above if above > 0 else 0.0,
+    )
+    r_span = max(
+        r_below / below if below > 0 else 0.0,
+        r_above / above if above > 0 else 0.0,
+    )
+    return (
+        (y_ref - below * l_span, y_ref + above * l_span),
+        (y_ref - below * r_span, y_ref + above * r_span),
+    )
+
+
+N_VOLUME_PCS = 5
+
+
+def _ellipsoid_volume_from_eigs(eig_cell, n_pcs=N_VOLUME_PCS):
+    """sqrt(prod of the leading n_pcs eigenvalues); log-sum for numerical stability."""
+    if eig_cell is None or len(eig_cell) == 0:
+        return np.nan
+    eigs = np.asarray(eig_cell[0], dtype=float).ravel()
+    if eigs.size < n_pcs:
+        return np.nan
+    eigs = eigs[:n_pcs]
+    if np.any(eigs <= 0) or not np.all(np.isfinite(eigs)):
+        return np.nan
+    return float(np.exp(0.5 * np.sum(np.log(eigs))))
 
 
 try:
@@ -86,12 +176,10 @@ geometry_filter = ((df_geometry_stats.session_number==1)&(df_geometry_stats.expe
 df_stats = df_stats_all[stats_filter].drop(['session_number', 'experience_level', 'is_image_novel', 'is_change'], axis=1)
 df_geometry = df_geometry_stats[geometry_filter].drop(['session_number', 'experience_level', 'is_image_novel', 'is_change'], axis=1)
 
-# Compute volume_10PC from eigenvalues_95 (first 10 eigenvalues)
-# Eigenvalues are stored as [array(...)], so extract array first
-# Volume of ellipsoid is proportional to product of square roots of eigenvalues
-df_geometry['volume_10PC'] = df_geometry['eigenvalues_95'].apply(
-    lambda eig: np.sqrt(np.prod(eig[0][:3])) if len(eig) > 0 and len(eig[0]) >= 3 else np.nan
-)
+# Compute volume_10PC from the leading 10 covariance eigenvalues.
+# Stored volume / volume_95 use a variable number of axes (dim_95 ~ 15–78) and
+# underflow to ~0; a fixed 10-PC product is comparable across sessions.
+df_geometry['volume_10PC'] = df_geometry['eigenvalues_95'].apply(_ellipsoid_volume_from_eigs)
 
 # Compute missing summary plot metrics: rbar and TR_emp
 df_stats['rates'] = df_stats['avgspikecounts'].apply(lambda x: x[0] / 0.05)
@@ -193,11 +281,97 @@ for value_vars, filename, title in ratio_metric_groups:
         plt.close(g_ratio.figure)
     else:
         plt.show()
+
+# Combined 5-metric boxplot: firing stats on the left axis, geometry on the right.
+left_ratio_metrics = ['rbar', 'TR_emp', 'PR_emp']
+right_ratio_metrics = ['volume_10PC', 'cloud_separation']
+all_ratio_metrics = left_ratio_metrics + right_ratio_metrics
+ratio_metric_colors = {
+    'rbar': '#03045E',
+    'TR_emp': '#0077B6',
+    'PR_emp': '#48CAE4',
+    'volume_10PC': '#0B6E4F',
+    'cloud_separation': '#F0A600',
+}
+df_plot_all = df_metrics_ratio.melt(
+    id_vars=['session_id', 'area', 'N'],
+    value_vars=all_ratio_metrics,
+    var_name='metric',
+    value_name='ratio',
+)
+
+left_box_data, left_box_colors = [], []
+right_box_data, right_box_colors = [], []
+for metric in left_ratio_metrics:
+    left_box_data.append(
+        df_plot_all.loc[df_plot_all['metric'] == metric, 'ratio'].dropna().to_numpy()
+    )
+    left_box_colors.append(ratio_metric_colors[metric])
+for metric in right_ratio_metrics:
+    right_box_data.append(
+        df_plot_all.loc[df_plot_all['metric'] == metric, 'ratio'].dropna().to_numpy()
+    )
+    right_box_colors.append(ratio_metric_colors[metric])
+
+left_positions = list(range(len(left_ratio_metrics)))
+right_positions = list(range(len(left_ratio_metrics), len(all_ratio_metrics)))
+
+fig_all, ax_left = plt.subplots(figsize=(9, 5))
+ax_right = ax_left.twinx()
+boxplot_kw = dict(widths=0.6, patch_artist=True, showfliers=True, zorder=2)
+bp_left = ax_left.boxplot(left_box_data, positions=left_positions, **boxplot_kw)
+bp_right = ax_right.boxplot(right_box_data, positions=right_positions, **boxplot_kw)
+_style_filled_boxes(bp_left, left_box_colors)
+_style_filled_boxes(bp_right, right_box_colors)
+
+left_ylim, right_ylim = _twin_ylims_sharing_reference(
+    np.concatenate(left_box_data) if left_box_data else np.array([1.0]),
+    np.concatenate(right_box_data) if right_box_data else np.array([1.0]),
+    y_ref=1.0,
+    pad_frac=0.15,
+)
+ax_left.set_ylim(*left_ylim)
+ax_right.set_ylim(*right_ylim)
+
+n_all = len(all_ratio_metrics)
+ax_left.set_xticks(range(n_all))
+ax_left.set_xticklabels(all_ratio_metrics, rotation=45, ha='right')
+ax_left.set_xlim(-0.5, n_all - 0.5)
+ax_right.set_xlim(-0.5, n_all - 0.5)
+ax_right.tick_params(axis='x', which='both', bottom=False, labelbottom=False)
+ax_left.set_xlabel('Metric')
+ax_left.set_ylabel('Ratios Active / Passive (firing stats)')
+ax_right.set_ylabel('Ratios Active / Passive (geometry)')
+ax_left.grid(axis='y', linestyle='--', alpha=0.2)
+ax_left.axvline(len(left_ratio_metrics) - 0.5, color='0.7', linestyle=':', linewidth=0.8, zorder=0)
+ax_left.axhline(1, color='black', linestyle='--', linewidth=0.8, alpha=0.5, zorder=0)
+_annotate_one_sample_vs_mu(
+    ax_left,
+    df_plot_all[df_plot_all['metric'].isin(left_ratio_metrics)],
+    'ratio', left_ratio_metrics, mu=1.0, category_col='metric', x_positions=left_positions,
+)
+_annotate_one_sample_vs_mu(
+    ax_right,
+    df_plot_all[df_plot_all['metric'].isin(right_ratio_metrics)],
+    'ratio', right_ratio_metrics, mu=1.0, category_col='metric', x_positions=right_positions,
+)
+fig_all.suptitle('Summary Plot: Active vs Passive Ratios Across All Metrics', y=1.02)
+fig_all.tight_layout()
+
+if SAVE_PLOTS:
+    fig_all.savefig(
+        output_dir / 'summary_ratios_all_metrics_twin_boxplot.pdf',
+        format='pdf',
+        bbox_inches='tight',
+    )
+    plt.close(fig_all)
+else:
+    plt.show()
 # %%
 # ---------------------------------------------------------------
-# SPAGHETTI PLOTS: CHERRY-PICKED SESSION
+# SPAGHETTI PLOTS: ACTIVE VS PASSIVE PER SESSION
 # ---------------------------------------------------------------
-# Create spaghetti plots for cherry-picked session_id='1139846596'
+# One figure per available session (image-averaged metrics).
 
 metric_names = ['rbar', 'PR_emp', 'TR_emp', 'volume_10PC', 'cloud_separation']
 metric_labels = {
@@ -209,248 +383,77 @@ metric_labels = {
 }
 x_positions = {True: 0, False: 1}  # Active first, then passive
 
-cherry_picked_session = '1139846596'
-df_session_cherry = df_metrics_images[df_metrics_images['session_id'] == cherry_picked_session].copy()
 
-if not df_session_cherry.empty:
-    # Create figure with subplots for each metric
+def _plot_session_spaghetti(df_session, session_id):
     fig, axes = plt.subplots(1, len(metric_names), figsize=(4 * len(metric_names), 6), sharey=True)
     if len(metric_names) == 1:
         axes = [axes]
-    
-    for ax, metric in zip(axes, metric_names):
-        df_metric = df_session_cherry[df_session_cherry[metric].notna()].copy()
-        
-        if df_metric.empty:
-            ax.set_visible(False)
-            continue
-        
-        # Pivot to get active and passive values side by side
-        pivot = df_metric.pivot_table(
-            index='image_name',
-            columns='active',
-            values=metric,
-            aggfunc='mean'
-        )
-        
-        # Normalize: divide each value by the average of active + passive for that image
-        if False in pivot.columns and True in pivot.columns:
-            pivot = pivot.dropna(subset=[False, True])
-            pivot_mean = (pivot[False] + pivot[True]) / 2
-            pivot_normalized = pivot.div(pivot_mean, axis=0)
-            
-            # Add reference line at y=1 (lower layer)
-            ax.axhline(1, color='black', linestyle='--', linewidth=0.8, zorder=0)
-            
-            # Plot lines connecting active and passive for each image
-            for _, row in pivot_normalized.iterrows():
-                ax.plot(
-                    [x_positions[True], x_positions[False]],
-                    [row[True], row[False]],
-                    color='black',
-                    linewidth=1.0,
-                    alpha=0.65,
-                    zorder=2
-                )
-            
-            # Plot scatter points for active and passive (in order: active first, then passive)
-            for active_state in [True, False]:
-                # Get normalized values for this active state
-                normalized_values = []
-                for img_name in pivot_normalized.index:
-                    normalized_values.append(pivot_normalized.loc[img_name, active_state])
-                
-                ax.scatter(
-                    np.full(len(normalized_values), x_positions[active_state]),
-                    normalized_values,
-                    s=70,
-                    facecolors='white',
-                    edgecolors='black',
-                    linewidths=0.8,
-                    alpha=0.7,
-                    zorder=3,
-                    rasterized=False
-                )
-        else:
-            ax.set_visible(False)
-            continue
-        
-        # Set labels and formatting
-        ax.set_xticks([x_positions[True], x_positions[False]])
-        ax.set_xticklabels(['Active', 'Passive'])
-        ax.set_xlim(-0.05, 1.05)
-        ax.set_title(metric_labels[metric])
-        ax.grid(axis='y', linestyle='--', alpha=0.3)
-        ax.set_ylabel(f"{metric_labels[metric]} (Normalized)")
-    
-    fig.suptitle(f"Session {cherry_picked_session}: Active vs Passive Trajectories (Cherry-Picked)", y=0.98)
-    fig.tight_layout()
-    
-    if SAVE_PLOTS:
-        output_dir = RESULTS_DIR
-        output_dir.mkdir(parents=True, exist_ok=True)
-        fig.savefig(
-            output_dir / f"spaghetti_metrics_{cherry_picked_session}_cherrypicked.pdf",
-            format="pdf",
-            bbox_inches="tight",
-            dpi=300
-        )
-        plt.close(fig)
-    else:
-        plt.show()
-# %%
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# %%
-# ---------------------------------------------------------------
-# SPAGHETTI PLOTS: ACTIVE VS PASSIVE PER METRIC PER SESSION
-# ---------------------------------------------------------------
-# Create spaghetti plots showing active vs passive for each metric
-# One subplot per metric, lines connect active to passive for each image
-
-metric_names = ['rbar', 'PR_emp', 'TR_emp', 'volume_10PC', 'cloud_separation']
-metric_labels = {
-    'rbar': 'Mean Firing Rate (rbar)',
-    'PR_emp': 'Participation Ratio (PR_emp)',
-    'TR_emp': 'Trial Ratio (TR_emp)',
-    'volume_10PC': 'Volume (10PC)',
-    'cloud_separation': 'Cloud Separation'
-}
-x_positions = {True: 0, False: 1}  # Active first, then passive
-
-# Get unique session IDs
-session_ids = sorted(df_metrics_images['session_id'].unique())
-
-for session_id in session_ids:
-    df_session = df_metrics_images[df_metrics_images['session_id'] == session_id].copy()
-    
-    if df_session.empty:
-        continue
-    
-    # Create figure with subplots for each metric
-    fig, axes = plt.subplots(1, len(metric_names), figsize=(4 * len(metric_names), 6), sharey=True)
-    if len(metric_names) == 1:
-        axes = [axes]
-    
     for ax, metric in zip(axes, metric_names):
         df_metric = df_session[df_session[metric].notna()].copy()
-        
         if df_metric.empty:
             ax.set_visible(False)
             continue
-        
-        # Pivot to get active and passive values side by side
+
         pivot = df_metric.pivot_table(
             index='image_name',
             columns='active',
             values=metric,
-            aggfunc='mean'
+            aggfunc='mean',
         )
-        
-        # Normalize: divide each value by the average of active + passive for that image
-        if False in pivot.columns and True in pivot.columns:
-            pivot = pivot.dropna(subset=[False, True])
-            pivot_mean = (pivot[False] + pivot[True]) / 2
-            pivot_normalized = pivot.div(pivot_mean, axis=0)
-            
-            # Add reference line at y=1 (lower layer)
-            ax.axhline(1, color='black', linestyle='--', linewidth=0.8, zorder=0)
-            
-            # Plot lines connecting active and passive for each image
-            for _, row in pivot_normalized.iterrows():
-                ax.plot(
-                    [x_positions[True], x_positions[False]],
-                    [row[True], row[False]],
-                    color='black',
-                    linewidth=1.0,
-                    alpha=0.65,
-                    zorder=2
-                )
-            
-            # Plot scatter points for active and passive (in order: active first, then passive)
-            for active_state in [True, False]:
-                # Get normalized values for this active state
-                normalized_values = []
-                for img_name in pivot_normalized.index:
-                    normalized_values.append(pivot_normalized.loc[img_name, active_state])
-                
-                ax.scatter(
-                    np.full(len(normalized_values), x_positions[active_state]),
-                    normalized_values,
-                    s=70,
-                    facecolors='white',
-                    edgecolors='black',
-                    linewidths=0.8,
-                    alpha=0.7,
-                    zorder=3,
-                    rasterized=True
-                )
-        else:
+        if False not in pivot.columns or True not in pivot.columns:
             ax.set_visible(False)
             continue
-        
-        # Set labels and formatting
+
+        pivot = pivot.dropna(subset=[False, True])
+        pivot_mean = (pivot[False] + pivot[True]) / 2
+        pivot_normalized = pivot.div(pivot_mean, axis=0)
+
+        ax.axhline(1, color='black', linestyle='--', linewidth=0.8, zorder=0)
+        for _, row in pivot_normalized.iterrows():
+            ax.plot(
+                [x_positions[True], x_positions[False]],
+                [row[True], row[False]],
+                color='black',
+                linewidth=1.0,
+                alpha=0.65,
+                zorder=2,
+            )
+        for active_state in [True, False]:
+            normalized_values = [
+                pivot_normalized.loc[img_name, active_state]
+                for img_name in pivot_normalized.index
+            ]
+            ax.scatter(
+                np.full(len(normalized_values), x_positions[active_state]),
+                normalized_values,
+                s=70,
+                facecolors='white',
+                edgecolors='black',
+                linewidths=0.8,
+                alpha=0.7,
+                zorder=3,
+                rasterized=False,
+            )
+
         ax.set_xticks([x_positions[True], x_positions[False]])
         ax.set_xticklabels(['Active', 'Passive'])
         ax.set_xlim(-0.05, 1.05)
         ax.set_title(metric_labels[metric])
         ax.grid(axis='y', linestyle='--', alpha=0.3)
         ax.set_ylabel(f"{metric_labels[metric]} (Normalized)")
-    
+
     fig.suptitle(f"Session {session_id}: Active vs Passive Trajectories", y=0.98)
     fig.tight_layout()
-    
+    return fig
+
+
+session_ids = sorted(df_metrics_images['session_id'].astype(str).unique())
+for session_id in session_ids:
+    df_session = df_metrics_images[df_metrics_images['session_id'].astype(str) == session_id].copy()
+    if df_session.empty:
+        continue
+    fig = _plot_session_spaghetti(df_session, session_id)
     if SAVE_PLOTS:
         output_dir = RESULTS_DIR
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -458,8 +461,61 @@ for session_id in session_ids:
             output_dir / f"spaghetti_metrics_{session_id}.pdf",
             format="pdf",
             bbox_inches="tight",
-            dpi=300
+            dpi=300,
         )
         plt.close(fig)
     else:
         plt.show()
+# %%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# %%

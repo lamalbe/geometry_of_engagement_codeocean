@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from scipy import stats
 
 # LGd: {True: '#80B918', False: '#BFD200'},
 # VIS: {True: '#34A0A4', False: '#48CAE4'},
@@ -12,12 +13,15 @@ import seaborn as sns
 
 
 # %%
-SAVE_PLOTS = False
+SAVE_PLOTS = True
 CHANNEL = "VISm_to_SCMRN"
+SOURCE_AREA = "VISm"
 PC_K_MAX = 5
 ACTIVE_COLOR = "#2A7FFF"
 PASSIVE_COLOR = "#AA0000"
 AP_PALETTE = {True: ACTIVE_COLOR, False: PASSIVE_COLOR}
+SV_RATIO_COLOR = "#0079BC"
+PR_SV_RATIO_COLOR = "#5AA02C"
 
 try:
     _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -27,6 +31,202 @@ except NameError:
 DATA_DIR = _SCRIPT_DIR.parent / "data"
 RESULTS_DIR = _SCRIPT_DIR.parent / "results"
 results_dir = RESULTS_DIR
+
+
+def get_asterisk(p_value):
+    """Convert p-value to asterisk notation."""
+    if pd.isna(p_value) or np.isnan(p_value):
+        return ""
+    if p_value < 0.001:
+        return "***"
+    if p_value < 0.01:
+        return "**"
+    if p_value < 0.05:
+        return "*"
+    return ""
+
+
+def _y_offset_for_annotations(y_series, frac=0.03):
+    y = pd.Series(y_series).dropna()
+    if y.empty:
+        return 0.1
+    span = y.max() - y.min()
+    return frac * span if span > 0 else 0.1
+
+
+def _annotate_one_sample_vs_mu(
+    ax, data, y_col, categories, mu=1.0, category_col="area", x_positions=None,
+):
+    y_offset = _y_offset_for_annotations(data[y_col])
+    for i, category in enumerate(categories):
+        vals = data.loc[data[category_col] == category, y_col].dropna()
+        p = np.nan
+        if len(vals) > 1:
+            _, p = stats.ttest_1samp(vals, mu)
+        ast = get_asterisk(p)
+        if not ast:
+            continue
+        box_y = vals.quantile(0.75) + y_offset
+        x = x_positions[i] if x_positions is not None else i
+        ax.text(
+            x, box_y, ast,
+            ha="center", va="bottom", color="black",
+            fontsize=10, fontweight="bold", clip_on=True,
+        )
+
+
+def _annotate_two_sample_active_passive(ax, data, y_col):
+    y_offset = _y_offset_for_annotations(data[y_col])
+    active = data.loc[data["active"] == True, y_col].dropna()
+    passive = data.loc[data["active"] == False, y_col].dropna()
+    p = np.nan
+    if len(active) > 1 and len(passive) > 1:
+        _, p = stats.ttest_ind(active, passive, equal_var=False)
+    ast = get_asterisk(p)
+    if not ast:
+        return
+    mid_y = max(active.quantile(0.75), passive.quantile(0.75)) + y_offset
+    ax.text(
+        0.5, mid_y, ast,
+        ha="center", va="bottom", color="black",
+        fontsize=10, fontweight="bold", clip_on=True,
+    )
+
+
+def _pad_ylim_for_asterisks(ax):
+    ymin, ymax = ax.get_ylim()
+    pad = 0.08 * (ymax - ymin) if ymax > ymin else 0.1
+    ax.set_ylim(ymin, ymax + pad)
+
+
+def _style_filled_boxes(bp, box_colors):
+    for patch, color in zip(bp["boxes"], box_colors):
+        patch.set_facecolor(color)
+        patch.set_edgecolor("black")
+        patch.set_linewidth(1.5)
+        patch.set_alpha(0.7)
+    for i in range(len(box_colors)):
+        bp["whiskers"][i * 2].set_color("black")
+        bp["whiskers"][i * 2 + 1].set_color("black")
+        bp["whiskers"][i * 2].set_linewidth(1.5)
+        bp["whiskers"][i * 2 + 1].set_linewidth(1.5)
+        bp["caps"][i * 2].set_color("black")
+        bp["caps"][i * 2 + 1].set_color("black")
+        bp["caps"][i * 2].set_linewidth(1.5)
+        bp["caps"][i * 2 + 1].set_linewidth(1.5)
+    for median in bp["medians"]:
+        median.set_color("black")
+        median.set_linewidth(1.5)
+    for flier in bp.get("fliers", []):
+        flier.set_markerfacecolor("white")
+        flier.set_markeredgecolor("black")
+        flier.set_markersize(5)
+        flier.set_alpha(0.8)
+        flier.set_marker("o")
+
+
+def _twin_ylims_sharing_reference(left_vals, right_vals, y_ref=1.0, pad_frac=0.12):
+    left = np.asarray(left_vals, dtype=float)
+    right = np.asarray(right_vals, dtype=float)
+    left = left[np.isfinite(left)]
+    right = right[np.isfinite(right)]
+    if left.size == 0:
+        left = np.array([y_ref - 0.5, y_ref + 0.5])
+    if right.size == 0:
+        right = np.array([y_ref - 0.5, y_ref + 0.5])
+    lmin, lmax = float(left.min()), float(left.max())
+    rmin, rmax = float(right.min()), float(right.max())
+    lmin, lmax = min(lmin, y_ref), max(lmax, y_ref)
+    rmin, rmax = min(rmin, y_ref), max(rmax, y_ref)
+    lpad = pad_frac * (lmax - lmin) if lmax > lmin else 0.1
+    rpad = pad_frac * (rmax - rmin) if rmax > rmin else 0.1
+    lmin, lmax = lmin - lpad, lmax + lpad
+    rmin, rmax = rmin - rpad, rmax + rpad
+    l_below, l_above = y_ref - lmin, lmax - y_ref
+    r_below, r_above = y_ref - rmin, rmax - y_ref
+    below = max(
+        l_below / (l_below + l_above) if (l_below + l_above) > 0 else 0.5,
+        r_below / (r_below + r_above) if (r_below + r_above) > 0 else 0.5,
+    )
+    above = max(
+        l_above / (l_below + l_above) if (l_below + l_above) > 0 else 0.5,
+        r_above / (r_below + r_above) if (r_below + r_above) > 0 else 0.5,
+    )
+    total = below + above
+    below, above = below / total, above / total
+    l_span = max(
+        l_below / below if below > 0 else 0.0,
+        l_above / above if above > 0 else 0.0,
+    )
+    r_span = max(
+        r_below / below if below > 0 else 0.0,
+        r_above / above if above > 0 else 0.0,
+    )
+    return (
+        (y_ref - below * l_span, y_ref + above * l_span),
+        (y_ref - below * r_span, y_ref + above * r_span),
+    )
+
+
+def _save_fig(fig, filename):
+    if not SAVE_PLOTS:
+        plt.show()
+        return
+    results_dir.mkdir(parents=True, exist_ok=True)
+    fig.savefig(results_dir / filename, format="pdf", bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_filled_boxes(
+    df,
+    y_col,
+    categories,
+    colors,
+    xlabel,
+    ylabel,
+    title,
+    filename,
+    category_col,
+    tick_labels=None,
+    mu=None,
+    two_sample_active_passive=False,
+    figsize=(6, 5),
+):
+    box_data, box_colors, ticks = [], [], []
+    for category in categories:
+        vals = df.loc[df[category_col] == category, y_col].dropna().to_numpy()
+        if len(vals) == 0:
+            continue
+        box_data.append(vals)
+        box_colors.append(colors[len(ticks)] if not isinstance(colors, dict) else colors.get(category, "#888888"))
+        ticks.append(category)
+    if not box_data:
+        return None
+    labels = tick_labels if tick_labels is not None else [str(t) for t in ticks]
+    fig, ax = plt.subplots(figsize=figsize)
+    bp = ax.boxplot(
+        box_data, positions=range(len(box_data)), widths=0.6,
+        patch_artist=True, showfliers=True, zorder=2,
+    )
+    _style_filled_boxes(bp, box_colors)
+    ax.set_xticks(range(len(box_data)))
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_xlim(-0.5, len(box_data) - 0.5)
+    ax.grid(axis="y", linestyle="--", alpha=0.2)
+    if mu is not None:
+        ax.axhline(mu, color="black", linestyle="--", linewidth=0.8, alpha=0.5, zorder=0)
+        _annotate_one_sample_vs_mu(
+            ax, df, y_col, ticks, mu=mu, category_col=category_col,
+        )
+    elif two_sample_active_passive:
+        _annotate_two_sample_active_passive(ax, df, y_col)
+    _pad_ylim_for_asterisks(ax)
+    ax.set_title(title)
+    fig.tight_layout()
+    _save_fig(fig, filename)
+    return fig
 
 # %%
 df_basis_vectors = pd.read_pickle(DATA_DIR / "df_basis_vectors.pk")
@@ -65,27 +265,24 @@ df_svd_spectrum = pd.DataFrame(_sv_rows)
 # --------------------------------------
 #   SVD PARTICIPATION RATIO AND SPECTRUM
 # --------------------------------------
+# Observations are (session_id, image_name) pairs.
 
 plot_filter = df_svd_spectrum.channel == CHANNEL
-df_plot = df_svd_spectrum[plot_filter]
+df_plot = df_svd_spectrum[plot_filter].copy()
 
-g_pr_sv = sns.catplot(
-    data=df_plot,
-    y="participation_ratio_sv",
-    x="active",
-    kind="box",
+plot_filled_boxes(
+    df_plot,
+    y_col="participation_ratio_sv",
+    categories=[True, False],
+    colors=AP_PALETTE,
+    xlabel="",
+    ylabel="SVD participation ratio",
+    title=f"SVD participation ratio ({CHANNEL})",
+    filename=f"modes_alignment_{CHANNEL}_participation_ratio_sv_box.pdf",
+    category_col="active",
+    tick_labels=["active", "passive"],
+    two_sample_active_passive=True,
 )
-
-if SAVE_PLOTS:
-    results_dir.mkdir(parents=True, exist_ok=True)
-    g_pr_sv.figure.savefig(
-        results_dir / f"modes_alignment_{CHANNEL}_participation_ratio_sv_box.pdf",
-        format="pdf",
-        bbox_inches="tight",
-    )
-    plt.close(g_pr_sv.figure)
-else:
-    plt.show()
 
 sv_ratio_rows = []
 for (session_id, image_name, channel), grp in df_plot.groupby(
@@ -123,6 +320,20 @@ df_sv_ratio["k"] = pd.Categorical(
     df_sv_ratio["k"], categories=list(range(1, 11)), ordered=True
 )
 
+pr_wide = (
+    df_plot.pivot_table(
+        index=["session_id", "image_name", "channel"],
+        columns="active",
+        values="participation_ratio_sv",
+        aggfunc="first",
+    )
+    .reset_index()
+    .rename(columns={True: "pr_active", False: "pr_passive"})
+)
+pr_wide = pr_wide.dropna(subset=["pr_active", "pr_passive"])
+pr_wide["pr_sv_ratio"] = pr_wide["pr_active"] / pr_wide["pr_passive"]
+pr_wide = pr_wide[np.isfinite(pr_wide["pr_sv_ratio"])]
+
 g_sv_ratio = sns.catplot(
     data=df_sv_ratio,
     x="k",
@@ -140,16 +351,101 @@ g_sv_ratio.figure.suptitle(
     y=1.02,
 )
 g_sv_ratio.ax.axhline(1.0, ls="--", c=".4", lw=1, zorder=0)
+_save_fig(g_sv_ratio.figure, f"modes_alignment_{CHANNEL}_singular_value_ratio_point.pdf")
 
-if SAVE_PLOTS:
-    g_sv_ratio.figure.savefig(
-        results_dir / f"modes_alignment_{CHANNEL}_singular_value_ratio_point.pdf",
-        format="pdf",
-        bbox_inches="tight",
+# Twin boxplot: SVD spectrum ratios (left) and SVD PR ratio (right); y=1 shared.
+sv_k_order = list(range(1, 6))
+left_box_data, left_box_colors = [], []
+for k in sv_k_order:
+    left_box_data.append(
+        df_sv_ratio.loc[df_sv_ratio["k"] == k, "sv_ratio"].dropna().to_numpy()
     )
-    plt.close(g_sv_ratio.figure)
-else:
-    plt.show()
+    left_box_colors.append(SV_RATIO_COLOR)
+right_box_data = [pr_wide["pr_sv_ratio"].dropna().to_numpy()]
+right_box_colors = [PR_SV_RATIO_COLOR]
+left_positions = list(range(len(sv_k_order)))
+right_positions = [len(sv_k_order)]
+tick_labels = [str(k) for k in sv_k_order] + ["PR"]
+
+df_sv_ratio_annot = df_sv_ratio.rename(columns={"sv_ratio": "ratio"}).copy()
+df_sv_ratio_annot["metric"] = df_sv_ratio_annot["k"].astype(int).map(str)
+df_pr_annot = pr_wide[["pr_sv_ratio"]].rename(columns={"pr_sv_ratio": "ratio"}).copy()
+df_pr_annot["metric"] = "PR"
+
+fig_twin, ax_left = plt.subplots(figsize=(10, 5))
+ax_right = ax_left.twinx()
+boxplot_kw = dict(widths=0.6, patch_artist=True, showfliers=True, zorder=2)
+bp_left = ax_left.boxplot(left_box_data, positions=left_positions, **boxplot_kw)
+bp_right = ax_right.boxplot(right_box_data, positions=right_positions, **boxplot_kw)
+_style_filled_boxes(bp_left, left_box_colors)
+_style_filled_boxes(bp_right, right_box_colors)
+left_ylim, right_ylim = _twin_ylims_sharing_reference(
+    np.concatenate(left_box_data) if left_box_data else np.array([1.0]),
+    np.concatenate(right_box_data) if right_box_data else np.array([1.0]),
+    y_ref=1.0,
+    pad_frac=0.15,
+)
+ax_left.set_ylim(*left_ylim)
+ax_right.set_ylim(*right_ylim)
+n_all = len(tick_labels)
+ax_left.set_xticks(range(n_all))
+ax_left.set_xticklabels(tick_labels, rotation=45, ha="right")
+ax_left.set_xlim(-0.5, n_all - 0.5)
+ax_right.set_xlim(-0.5, n_all - 0.5)
+ax_right.tick_params(axis="x", which="both", bottom=False, labelbottom=False)
+ax_left.set_xlabel("Singular value rank k")
+ax_left.set_ylabel("Active / passive singular value")
+ax_right.set_ylabel("Active / passive SVD PR")
+ax_left.grid(axis="y", linestyle="--", alpha=0.2)
+ax_left.axvline(len(sv_k_order) - 0.5, color="0.7", linestyle=":", linewidth=0.8, zorder=0)
+ax_left.axhline(1, color="black", linestyle="--", linewidth=0.8, alpha=0.5, zorder=0)
+_annotate_one_sample_vs_mu(
+    ax_left, df_sv_ratio_annot, "ratio", [str(k) for k in sv_k_order],
+    mu=1.0, category_col="metric", x_positions=left_positions,
+)
+_annotate_one_sample_vs_mu(
+    ax_right, df_pr_annot, "ratio", ["PR"],
+    mu=1.0, category_col="metric", x_positions=right_positions,
+)
+fig_twin.suptitle(
+    f"SVD spectrum and PR ratios ({CHANNEL}); session × image",
+    y=1.02,
+)
+fig_twin.tight_layout()
+_save_fig(fig_twin, f"modes_alignment_{CHANNEL}_svd_spectrum_pr_twin_boxplot.pdf")
+
+plot_filled_boxes(
+    df_pr_annot,
+    y_col="ratio",
+    categories=["PR"],
+    colors={"PR": PR_SV_RATIO_COLOR},
+    xlabel="",
+    ylabel="Active / passive SVD PR",
+    title=f"SVD PR active/passive ratio ({CHANNEL})",
+    filename=f"modes_alignment_{CHANNEL}_pr_sv_ratio_box.pdf",
+    category_col="metric",
+    tick_labels=["SVD PR"],
+    mu=1.0,
+    figsize=(4, 5),
+)
+
+g_pr_ratio_kde = sns.displot(
+    data=pr_wide,
+    x="pr_sv_ratio",
+    kind="kde",
+    color=PR_SV_RATIO_COLOR,
+    fill=True,
+    height=4.0,
+    aspect=1.2,
+)
+g_pr_ratio_kde.set_axis_labels("Active / passive SVD PR", "density")
+g_pr_ratio_kde.figure.suptitle(
+    f"SVD PR ratio distribution ({CHANNEL}); session × image",
+    y=1.02,
+)
+for ax in g_pr_ratio_kde.axes.flat:
+    ax.axvline(1.0, ls="--", c="k", lw=1, zorder=0)
+_save_fig(g_pr_ratio_kde.figure, f"modes_alignment_{CHANNEL}_pr_sv_ratio_kde.pdf")
 
 # %%
 # --------------------------------------
@@ -159,6 +455,7 @@ else:
 df_pc_spectrum = df_basis_vectors[
     (df_basis_vectors["basis_type"] == "PC")
     & (df_basis_vectors["channel"] == CHANNEL)
+    & (df_basis_vectors["area"] == SOURCE_AREA)
     & (df_basis_vectors["component_rank"] <= PC_K_MAX)
 ].copy()
 df_pc_spectrum["component_rank"] = pd.Categorical(
@@ -173,7 +470,6 @@ g_pc_spectrum = sns.catplot(
     y="eigenvalue",
     hue="active",
     hue_order=[True, False],
-    col="area",
     kind="point",
     errorbar="se",
     palette=AP_PALETTE,
@@ -184,21 +480,11 @@ g_pc_spectrum = sns.catplot(
 )
 g_pc_spectrum.set_axis_labels("PC rank k", "Eigenvalue")
 g_pc_spectrum.figure.suptitle(
-    f"Local PC spectra ({CHANNEL}); first {PC_K_MAX} eigenvalues; "
+    f"Local PC spectra {SOURCE_AREA} ({CHANNEL}); first {PC_K_MAX} eigenvalues; "
     "blue = active, red = passive; error bars = SE over session×image",
     y=1.02,
 )
-
-if SAVE_PLOTS:
-    results_dir.mkdir(parents=True, exist_ok=True)
-    g_pc_spectrum.figure.savefig(
-        results_dir / f"modes_alignment_{CHANNEL}_pc_spectrum_point.pdf",
-        format="pdf",
-        bbox_inches="tight",
-    )
-    plt.close(g_pc_spectrum.figure)
-else:
-    plt.show()
+_save_fig(g_pc_spectrum.figure, f"modes_alignment_{CHANNEL}_pc_spectrum_point.pdf")
 
 pc_ratio_rows = []
 for (session_id, image_name, channel, area), grp in df_pc_spectrum.groupby(
@@ -237,7 +523,6 @@ g_pc_ratio = sns.catplot(
     data=df_pc_ratio,
     x="k",
     y="eigenvalue_ratio",
-    col="area",
     kind="point",
     errorbar="se",
     linestyle="none",
@@ -247,37 +532,51 @@ g_pc_ratio = sns.catplot(
 )
 g_pc_ratio.set_axis_labels("PC rank k", "Active / passive eigenvalue ratio")
 g_pc_ratio.figure.suptitle(
-    f"Local PC spectrum ratio ({CHANNEL}); first {PC_K_MAX} eigenvalues; "
+    f"Local PC spectrum ratio {SOURCE_AREA} ({CHANNEL}); first {PC_K_MAX} eigenvalues; "
     "error bars = SE over session×image",
     y=1.02,
 )
 for ax in g_pc_ratio.axes.flat:
     ax.axhline(1.0, ls="--", c=".4", lw=1, zorder=0)
+_save_fig(g_pc_ratio.figure, f"modes_alignment_{CHANNEL}_pc_spectrum_ratio_point.pdf")
 
-if SAVE_PLOTS:
-    g_pc_ratio.figure.savefig(
-        results_dir / f"modes_alignment_{CHANNEL}_pc_spectrum_ratio_point.pdf",
-        format="pdf",
-        bbox_inches="tight",
-    )
-    plt.close(g_pc_ratio.figure)
-else:
-    plt.show()
+df_pc_ratio["k_label"] = df_pc_ratio["k"].astype(int).map(str)
+_pc_k_labels = [str(k) for k in range(1, PC_K_MAX + 1)]
+plot_filled_boxes(
+    df_pc_ratio,
+    y_col="eigenvalue_ratio",
+    categories=_pc_k_labels,
+    colors={lab: SV_RATIO_COLOR for lab in _pc_k_labels},
+    xlabel="PC rank k",
+    ylabel="Active / passive eigenvalue ratio",
+    title=f"Local PC spectrum ratio {SOURCE_AREA} ({CHANNEL})",
+    filename=f"modes_alignment_{CHANNEL}_pc_spectrum_ratio_box.pdf",
+    category_col="k_label",
+    tick_labels=_pc_k_labels,
+    mu=1.0,
+    figsize=(6, 5),
+)
 
 # %%
 # ------------------
 #  COSINE SIMILARITY ACROSS CONDITIONS
 # ------------------
+# Mean |cosine| over matched ranks; one value per (session_id, image_name).
 
 COSINE_YLIM = (-0.02, 1.02)
 
-df_max_cosine_active_passive.keys()
 plot_filter = (
     (df_max_cosine_active_passive.comparison != "PC_SV")
     & (df_max_cosine_active_passive.comparison != "SV_PC")
     & (df_max_cosine_active_passive.channel == CHANNEL)
 )
-df_plot = df_max_cosine_active_passive[plot_filter]
+df_plot = (
+    df_max_cosine_active_passive[plot_filter]
+    .groupby(["session_id", "image_name", "channel", "area", "comparison"], as_index=False)[
+        "abs_cosine"
+    ]
+    .mean()
+)
 
 INNER_KWS = dict(
     box_width=15,
@@ -293,7 +592,7 @@ g_violin = sns.catplot(
     x="area",
     row="comparison",
     kind="violin",
-    cut=0,
+    #cut=0,
     inner="box",
     inner_kws=INNER_KWS,
     sharey=True,
@@ -316,10 +615,17 @@ else:
 # ------------------
 #  COSINE SIMILARITY WITHIN CONDITIONS
 # -----------------
+# Mean |cosine| over matched ranks; one value per (session_id, image_name).
 
-df_max_cosine_within_condition.keys()
 plot_filter = df_max_cosine_within_condition.channel == CHANNEL
-df_plot = df_max_cosine_within_condition[plot_filter]
+df_plot = (
+    df_max_cosine_within_condition[plot_filter]
+    .groupby(
+        ["session_id", "image_name", "channel", "area", "comparison", "active"],
+        as_index=False,
+    )["abs_cosine"]
+    .mean()
+)
 
 INNER_KWS = dict(
     box_width=15,
@@ -615,21 +921,7 @@ else:
 # ---------------------
 #  OVERLAP SCATTERPLOTS (direction: active ↔ passive capture)
 # ---------------------
-
-from scipy import stats
-
-
-def get_asterisk(p_value):
-    """Convert p-value to asterisk notation."""
-    if pd.isna(p_value):
-        return ""
-    if p_value < 0.001:
-        return "***"
-    if p_value < 0.01:
-        return "**"
-    if p_value < 0.05:
-        return "*"
-    return ""
+# One point per (session_id, image_name).
 
 X_DIR = "active_captured_by_passive"
 Y_DIR = "passive_captured_by_active"
@@ -638,7 +930,7 @@ OVERLAP_SCATTER_DPI = 300
 RUG_KWS = dict(height=0.025, alpha=0.5, linewidth=0.8)
 OVERLAP_SCATTER_COLORS = {
     "svd": "#5AA02C",
-    "pc_VISm": "#0079BC",
+    f"pc_{SOURCE_AREA}": "#0079BC",
     "pc_SCMRN": "#F0A600",
 }
 
@@ -685,9 +977,9 @@ df_scatter_pc = df_scatter_pc[np.isfinite(df_scatter_pc["overlap_ratio"])]
 overlap_panels = [
     ("svd", df_scatter_svd, f"SVD subspace overlap ({CHANNEL})"),
     (
-        "pc_VISm",
-        df_scatter_pc[df_scatter_pc["area"] == "VISm"],
-        f"PC subspace overlap VISm ({CHANNEL})",
+        f"pc_{SOURCE_AREA}",
+        df_scatter_pc[df_scatter_pc["area"] == SOURCE_AREA],
+        f"PC subspace overlap {SOURCE_AREA} ({CHANNEL})",
     ),
     (
         "pc_SCMRN",
@@ -744,10 +1036,10 @@ for slug, df_panel, scatter_title in overlap_panels:
     else:
         plt.show()
 
-PANEL_ORDER = ["svd", "pc_VISm", "pc_SCMRN"]
+PANEL_ORDER = ["svd", f"pc_{SOURCE_AREA}", "pc_SCMRN"]
 PANEL_LABELS = {
     "svd": "SVD",
-    "pc_VISm": "PC VISm",
+    f"pc_{SOURCE_AREA}": f"PC {SOURCE_AREA}",
     "pc_SCMRN": "PC SCMRN",
 }
 
@@ -761,62 +1053,26 @@ df_ratio["panel"] = pd.Categorical(
     df_ratio["panel"], categories=PANEL_ORDER, ordered=True
 )
 
+plot_filled_boxes(
+    df_ratio,
+    y_col="overlap_ratio",
+    categories=PANEL_ORDER,
+    colors=OVERLAP_SCATTER_COLORS,
+    xlabel="",
+    ylabel="Active / passive overlap ratio",
+    title=f"Overlap ratio vs symmetry (H0: mean = 1, {CHANNEL})",
+    filename=f"modes_alignment_{CHANNEL}_overlap_ratio_box.pdf",
+    category_col="panel",
+    tick_labels=[PANEL_LABELS[p] for p in PANEL_ORDER],
+    mu=1.0,
+    figsize=(6, 5),
+)
+
 _ratio_ymin = float(df_ratio["overlap_ratio"].min())
 _ratio_ymax = float(df_ratio["overlap_ratio"].max())
 _ratio_yrange = _ratio_ymax - _ratio_ymin
 RATIO_Y_STAR = _ratio_ymax + 0.04 * _ratio_yrange
 RATIO_YLIM = (_ratio_ymin, RATIO_Y_STAR + 0.06 * _ratio_yrange)
-
-g_box = sns.catplot(
-    data=df_ratio,
-    y="overlap_ratio",
-    x="panel",
-    order=PANEL_ORDER,
-    kind="box",
-    height=4.0,
-    aspect=1.1,
-    sharey=True,
-)
-g_box.set_axis_labels("", "Active / passive overlap ratio")
-g_box.set_xticklabels([PANEL_LABELS[p] for p in PANEL_ORDER])
-g_box.figure.suptitle(
-    f"Overlap ratio vs symmetry (H0: mean = 1, {CHANNEL})", y=1.02
-)
-
-ax_box = g_box.ax
-ax_box.axhline(1.0, ls="--", c=".4", lw=1, zorder=0)
-ax_box.set_ylim(RATIO_YLIM)
-
-for i, panel in enumerate(PANEL_ORDER):
-    vals = df_ratio.loc[df_ratio["panel"] == panel, "overlap_ratio"].dropna().to_numpy()
-    if vals.size < 2:
-        p_value = np.nan
-    else:
-        _, p_value = stats.ttest_1samp(vals, popmean=1.0)
-    ast = get_asterisk(p_value)
-    if ast:
-        ax_box.text(
-            i,
-            RATIO_Y_STAR,
-            ast,
-            ha="center",
-            va="bottom",
-            color="black",
-            fontsize=11,
-            fontweight="bold",
-            clip_on=False,
-        )
-
-if SAVE_PLOTS:
-    results_dir.mkdir(parents=True, exist_ok=True)
-    g_box.figure.savefig(
-        results_dir / f"modes_alignment_{CHANNEL}_overlap_ratio_box.pdf",
-        format="pdf",
-        bbox_inches="tight",
-    )
-    plt.close(g_box.figure)
-else:
-    plt.show()
 
 g_ratio_violin = sns.catplot(
     data=df_ratio,
@@ -899,7 +1155,7 @@ OVERLAP_PASSIVE = False
 OVERLAP_SCATTER_DPI = 300
 OVERLAP_SCATTER_COLORS = {
     "cross_in_local": "#6F1D1B",
-    "local_in_cross_VISm": "#34A0A4",
+    f"local_in_cross_{SOURCE_AREA}": "#34A0A4",
     "local_in_cross_SCMRN": "#C36F09",
 }
 
@@ -958,9 +1214,9 @@ active_overlap_panels = [
         f"Cross cov. in local subspace ({CHANNEL})",
     ),
     (
-        "local_in_cross_VISm",
-        df_scatter_local_cross[df_scatter_local_cross["area"] == "VISm"],
-        f"Local var. in cross subspace VISm ({CHANNEL})",
+        f"local_in_cross_{SOURCE_AREA}",
+        df_scatter_local_cross[df_scatter_local_cross["area"] == SOURCE_AREA],
+        f"Local var. in cross subspace {SOURCE_AREA} ({CHANNEL})",
     ),
     (
         "local_in_cross_SCMRN",
@@ -1020,12 +1276,12 @@ for slug, df_panel, scatter_title in active_overlap_panels:
 
 ACTIVE_PANEL_ORDER = [
     "cross_in_local",
-    "local_in_cross_VISm",
+    f"local_in_cross_{SOURCE_AREA}",
     "local_in_cross_SCMRN",
 ]
 ACTIVE_PANEL_LABELS = {
     "cross_in_local": "Cross in local",
-    "local_in_cross_VISm": "Local in cross VISm",
+    f"local_in_cross_{SOURCE_AREA}": f"Local in cross {SOURCE_AREA}",
     "local_in_cross_SCMRN": "Local in cross SCMRN",
 }
 
@@ -1039,58 +1295,20 @@ df_ratio_active["panel"] = pd.Categorical(
     df_ratio_active["panel"], categories=ACTIVE_PANEL_ORDER, ordered=True
 )
 
-g_box = sns.catplot(
-    data=df_ratio_active,
-    y="overlap_ratio",
-    x="panel",
-    order=ACTIVE_PANEL_ORDER,
-    kind="box",
-    height=4.0,
-    aspect=1.1,
-    sharey=True,
+plot_filled_boxes(
+    df_ratio_active,
+    y_col="overlap_ratio",
+    categories=ACTIVE_PANEL_ORDER,
+    colors=OVERLAP_SCATTER_COLORS,
+    xlabel="",
+    ylabel="Active / passive overlap ratio",
+    title=f"Active overlap ratio vs symmetry (H0: mean = 1, {CHANNEL})",
+    filename=f"modes_alignment_{CHANNEL}_active_overlap_ratio_box.pdf",
+    category_col="panel",
+    tick_labels=[ACTIVE_PANEL_LABELS[p] for p in ACTIVE_PANEL_ORDER],
+    mu=1.0,
+    figsize=(6, 5),
 )
-g_box.set_axis_labels("", "Active / passive overlap ratio")
-g_box.set_xticklabels([ACTIVE_PANEL_LABELS[p] for p in ACTIVE_PANEL_ORDER])
-g_box.figure.suptitle(
-    f"Active overlap ratio vs symmetry (H0: mean = 1, {CHANNEL})", y=1.02
-)
-
-ax_box = g_box.ax
-ax_box.axhline(1.0, ls="--", c=".4", lw=1, zorder=0)
-ax_box.set_ylim(RATIO_YLIM)
-
-for i, panel in enumerate(ACTIVE_PANEL_ORDER):
-    vals = df_ratio_active.loc[
-        df_ratio_active["panel"] == panel, "overlap_ratio"
-    ].dropna().to_numpy()
-    if vals.size < 2:
-        p_value = np.nan
-    else:
-        _, p_value = stats.ttest_1samp(vals, popmean=1.0)
-    ast = get_asterisk(p_value)
-    if ast:
-        ax_box.text(
-            i,
-            RATIO_Y_STAR,
-            ast,
-            ha="center",
-            va="bottom",
-            color="black",
-            fontsize=11,
-            fontweight="bold",
-            clip_on=False,
-        )
-
-if SAVE_PLOTS:
-    g_box.figure.savefig(
-        results_dir
-        / f"modes_alignment_{CHANNEL}_active_overlap_ratio_box.pdf",
-        format="pdf",
-        bbox_inches="tight",
-    )
-    plt.close(g_box.figure)
-else:
-    plt.show()
 
 g_ratio_violin = sns.catplot(
     data=df_ratio_active,

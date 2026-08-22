@@ -11,7 +11,11 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 — registers 3d projectio
 # -------------
 #  CONFIG
 # -------------
-SAVE_PLOT = False
+SAVE_PLOT = True
+# True: only SESSION_IDS. False: every session that survives the image/area filters.
+USE_MANUAL_SESSIONS = True
+# SESSION_IDS = ["1093638203"] # Use this for 6 panel plot
+SESSION_IDS = ["1095138995"] # Use this for pooled SVD trial clouds
 
 try:
     _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -21,7 +25,6 @@ except NameError:
 DATA_DIR = _SCRIPT_DIR.parent / "data"
 RESULTS_DIR = _SCRIPT_DIR.parent / "results"
 
-SESSION_ID = "1055240613"
 IMAGE_NAME = "im078_r"
 TIME_FROM_STIMULUS_MIN = 0.1
 
@@ -56,9 +59,12 @@ data_filter = (
     & (df_activity.time_from_stimulus >= TIME_FROM_STIMULUS_MIN)
     & (df_activity.N >= 50)
     & (df_activity.area.isin(["VISm", "SCMRN"]))
-    & (df_activity.session_id.astype(str) == SESSION_ID)
     & (df_activity.image_name == IMAGE_NAME)
 )
+if USE_MANUAL_SESSIONS:
+    data_filter = data_filter & (
+        df_activity.session_id.astype(str).isin([str(s) for s in SESSION_IDS])
+    )
 df_activity_filtered = df_activity[data_filter].drop(
     ["session_number", "experience_level", "is_image_novel", "is_change", "image_set"],
     axis=1,
@@ -555,6 +561,28 @@ def run_pooled_svd_trial_cloud_analysis(
         )
 
 
+def _session_ids_to_run(df: pd.DataFrame) -> List[str]:
+    """Manual SESSION_IDS, or all session ids present after the image/area filters."""
+    available = sorted({str(s) for s in df["session_id"].astype(str).unique()})
+    if not USE_MANUAL_SESSIONS:
+        return available
+    wanted = [str(s) for s in SESSION_IDS]
+    missing = [s for s in wanted if s not in set(available)]
+    if missing:
+        raise RuntimeError(
+            f"Manual session(s) not in filtered data for image {IMAGE_NAME!r}: {missing}"
+        )
+    return wanted
+
+
+def _session_has_required_areas(df: pd.DataFrame, session_id: str) -> bool:
+    block = df[df["session_id"].astype(str) == str(session_id)]
+    required = {"VISm", "SCMRN"}
+    areas_active = set(block[block["active"] == True]["area"].unique())
+    areas_passive = set(block[block["active"] == False]["area"].unique())
+    return required.issubset(areas_active) and required.issubset(areas_passive)
+
+
 def _session_mats_ok(mats: tuple) -> bool:
     (
         cov_vism_scmrn_active,
@@ -575,40 +603,45 @@ def _session_mats_ok(mats: tuple) -> bool:
 
 # %%
 # ---------------------------
-#  SIX-PANEL PLOT (single session / image)
+#  SIX-PANEL PLOT (per session, fixed image)
 # ---------------------------
-sid = SESSION_ID
+session_ids = _session_ids_to_run(df_activity_filtered)
+n_six_panel = 0
+for sid in session_ids:
+    if not _session_has_required_areas(df_activity_filtered, sid):
+        msg = (
+            f"Session {sid} / image {IMAGE_NAME}: need VISm and SCMRN in both active and passive."
+        )
+        if USE_MANUAL_SESSIONS:
+            raise RuntimeError(msg)
+        print(f"  skip six-panel: {msg}")
+        continue
 
-block = df_activity_filtered[df_activity_filtered["session_id"].astype(str) == sid]
-required = {"VISm", "SCMRN"}
-areas_active = set(block[block["active"] == True]["area"].unique())
-areas_passive = set(block[block["active"] == False]["area"].unique())
+    mats = _session_matrices(df_activity_filtered, sid)
+    if not _session_mats_ok(mats):
+        msg = f"Could not build all six matrices for session {sid}, image {IMAGE_NAME}."
+        if USE_MANUAL_SESSIONS:
+            raise RuntimeError(msg)
+        print(f"  skip six-panel: {msg}")
+        continue
 
-if not required.issubset(areas_active) or not required.issubset(areas_passive):
-    raise RuntimeError(
-        f"Session {sid} / image {IMAGE_NAME}: need VISm and SCMRN in both active and passive."
+    plot_session_composite_six_panel(
+        session_id=sid,
+        cov_vism_scmrn_active=mats[0],
+        cov_vism_vism_active=mats[1],
+        cov_vism_vism_passive=mats[2],
+        cov_scmrn_scmrn_active=mats[3],
+        cov_scmrn_scmrn_passive=mats[4],
+        cov_scmrn_vism_passive=mats[5],
+        rank_k=CROSS_AREA_SVD_RANK,
+        save_plot=SAVE_PLOT,
+        results_dir=RESULTS_DIR,
+        image_name=IMAGE_NAME,
     )
-
-mats = _session_matrices(df_activity_filtered, sid)
-if not _session_mats_ok(mats):
-    raise RuntimeError(f"Could not build all six matrices for session {sid}, image {IMAGE_NAME}.")
-
-plot_session_composite_six_panel(
-    session_id=sid,
-    cov_vism_scmrn_active=mats[0],
-    cov_vism_vism_active=mats[1],
-    cov_vism_vism_passive=mats[2],
-    cov_scmrn_scmrn_active=mats[3],
-    cov_scmrn_scmrn_passive=mats[4],
-    cov_scmrn_vism_passive=mats[5],
-    rank_k=CROSS_AREA_SVD_RANK,
-    save_plot=SAVE_PLOT,
-    results_dir=RESULTS_DIR,
-    image_name=IMAGE_NAME,
-)
+    n_six_panel += 1
 
 print(
-    f"Done. Six-panel plot for session {sid}, image {IMAGE_NAME!r}, "
+    f"Done. Six-panel plot(s) for {n_six_panel} session(s), image {IMAGE_NAME!r}, "
     f"t ≥ {TIME_FROM_STIMULUS_MIN}s (mean-centered cov; rank-k={CROSS_AREA_SVD_RANK})."
 )
 if SAVE_PLOT:
@@ -616,24 +649,32 @@ if SAVE_PLOT:
 
 # %%
 # ---------------------------
-#  POOLED SVD TRIAL CLOUDS (2D and 3D)
+#  POOLED SVD TRIAL CLOUDS (2D and 3D, per session, fixed image)
 # ---------------------------
-
-sid = SESSION_ID
-
+session_ids = _session_ids_to_run(df_activity_filtered)
+n_clouds = 0
 print("Pooled cross-cov SVD trial clouds (active vs passive, shared basis)...")
-run_pooled_svd_trial_cloud_analysis(
-    df_activity_filtered,
-    sid,
-    IMAGE_NAME,
-    save_plot=SAVE_PLOT,
-    results_dir=RESULTS_DIR,
-)
+for sid in session_ids:
+    try:
+        run_pooled_svd_trial_cloud_analysis(
+            df_activity_filtered,
+            sid,
+            IMAGE_NAME,
+            save_plot=SAVE_PLOT,
+            results_dir=RESULTS_DIR,
+        )
+    except RuntimeError as exc:
+        if USE_MANUAL_SESSIONS:
+            raise
+        print(f"  skip trial clouds session {sid}: {exc}")
+        continue
+    n_clouds += 1
+
 print(
-    f"Done. Trial clouds for session {sid}, image {IMAGE_NAME!r} "
+    f"Done. Trial clouds for {n_clouds} session(s), image {IMAGE_NAME!r} "
     f"({SVD_CLOUD_N_DIMS_2D}D + {SVD_CLOUD_N_DIMS_3D}D, VISm and SCMRN)."
 )
 if SAVE_PLOT:
     print(f"  trial clouds: {(RESULTS_DIR / 'pooled_svd_trial_clouds').resolve()}")
 
- # %%
+# %%

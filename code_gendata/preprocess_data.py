@@ -165,7 +165,17 @@ def generate_dataframes_session(session_id, cache, ecephys_sessions_table):
         {'unit': x, 'spike_times': spike_times[x]} for x in spike_times.keys()
     )
     df_units = good_units.reset_index()
-    df_spikes = df_spikes_all[df_spikes_all.unit.isin(df_units.id.values)]
+    missing = ~df_units['id'].isin(df_spikes_all['unit'])
+    if missing.any():
+        raise KeyError(
+            f'{int(missing.sum())} units in df_units missing from spike_times '
+            f'for session {session_id}'
+        )
+    df_spikes = (
+        df_spikes_all.set_index('unit')
+        .loc[df_units['id'].to_numpy()]
+        .reset_index()
+    )
 
     behavior_sessions_table = cache.get_behavior_session_table()
     valid_sessions = behavior_sessions_table.ecephys_session_id.dropna()
