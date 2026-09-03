@@ -109,9 +109,12 @@ def _y_offset_for_annotations(y_series, frac=0.03):
     return frac * span if span > 0 else 0.1
 
 
-def _annotate_one_sample_vs_mu(ax, data, y_col, categories, mu=1.0, category_col="area"):
+def _annotate_one_sample_vs_mu(
+    ax, data, y_col, categories, mu=1.0, category_col="area", y_offset=None,
+):
     """Black asterisk above each category (two-sided one-sample t-test vs mu)."""
-    y_offset = _y_offset_for_annotations(data[y_col])
+    if y_offset is None:
+        y_offset = _y_offset_for_annotations(data[y_col])
     for i, category in enumerate(categories):
         vals = data.loc[data[category_col] == category, y_col].dropna()
         p = np.nan
@@ -172,10 +175,39 @@ def _ratio_ylim(vals, pad_frac=0.1):
     pad = pad_frac * span if span > 0 else 0.1
     return y_min - pad, y_max + pad
 
+
+def _tukey_inliers(vals, whis=1.5):
+    """Keep values inside the matplotlib boxplot whiskers (Q1/Q3 ± whis * IQR)."""
+    vals = np.asarray(vals, dtype=float)
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        return vals
+    q1, q3 = np.percentile(vals, [25, 75])
+    iqr = q3 - q1
+    lo, hi = q1 - whis * iqr, q3 + whis * iqr
+    return vals[(vals >= lo) & (vals <= hi)]
+
+
+def _box_ylim_values(box_data, cut_outliers=False):
+    """Values that should set the y-axis: all points, or Tukey inliers only."""
+    if not cut_outliers:
+        return np.concatenate(box_data)
+    inliers = [_tukey_inliers(v) for v in box_data]
+    inliers = [v for v in inliers if v.size]
+    if not inliers:
+        return np.concatenate(box_data)
+    return np.concatenate(inliers)
+
 # %%
 # -------------------------------------------------------------------------------------------------
 # ACTIVE/PASSIVE RATIO BY AREA (LGd, VISpl, VISm, SCMRN)
 # -------------------------------------------------------------------------------------------------
+# When True, all ratio boxplots in this section share a common y-axis.
+SHARE_Y_AXIS = False
+# When True, omit Tukey outliers from the plots and set y-limits from inliers.
+# Shared y-limits (SHARE_Y_AXIS) are then computed from those inliers.
+CUT_OUTLIERS = False
+
 box_area_order = ['LGd', 'VISpl', 'VISm', 'SCMRN']
 metrics_ratio = ['rbar', 'TR_emp', 'PR_emp', 'a_sparsity']
 ratio_keys = ['session_id', 'image_name', 'area']
@@ -208,6 +240,7 @@ if not df_ratio_areas.empty:
     if SAVE_PLOTS:
         output_dir.mkdir(parents=True, exist_ok=True)
 
+    ratio_plot_cases = []
     for metric in metrics_ratio:
         df_pivot = df_ratio_avg.pivot_table(
             index=ratio_keys,
@@ -236,15 +269,26 @@ if not df_ratio_areas.empty:
             tick_labels.append(area)
         if not box_data:
             continue
+        ratio_plot_cases.append((metric, df_plot_ratio, box_data, box_colors, tick_labels))
 
-        y_lim = _ratio_ylim(np.concatenate(box_data))
+    shared_ylim = None
+    if SHARE_Y_AXIS and ratio_plot_cases:
+        shared_ylim = _ratio_ylim(
+            np.concatenate([
+                _box_ylim_values(case[2], CUT_OUTLIERS) for case in ratio_plot_cases
+            ])
+        )
+
+    for metric, df_plot_ratio, box_data, box_colors, tick_labels in ratio_plot_cases:
+        ylim_vals = _box_ylim_values(box_data, CUT_OUTLIERS)
+        y_lim = shared_ylim if shared_ylim is not None else _ratio_ylim(ylim_vals)
         fig, ax = plt.subplots(figsize=(8, 5))
         bp = ax.boxplot(
             box_data,
             positions=range(len(box_data)),
             widths=0.6,
             patch_artist=True,
-            showfliers=True,
+            showfliers=not CUT_OUTLIERS,
             zorder=2,
         )
         _style_filled_boxes(bp, box_colors)
@@ -258,6 +302,7 @@ if not df_ratio_areas.empty:
         ax.axhline(1, color='black', linestyle='--', linewidth=0.8, alpha=0.5, zorder=0)
         _annotate_one_sample_vs_mu(
             ax, df_plot_ratio, 'ratio', tick_labels, mu=1.0, category_col='area',
+            y_offset=_y_offset_for_annotations(pd.Series(ylim_vals)),
         )
         _pad_ylim_for_asterisks(ax)
         fig.suptitle(

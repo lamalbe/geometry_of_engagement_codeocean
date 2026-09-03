@@ -50,6 +50,21 @@ Day-1 (`session_number==1`) Familiar sessions, image sets G and H. Viewing bins,
 
 Channels used in geometry/MLR: `VISm → SCMRN`, `VISpl → SCMRN` (geometry); MLR also uses `LGd → VISpl`, `VISpl → VISm`. Image identity decoding also uses `LGd → VISpl` (not lick decoding).
 
+**Day-1 Familiar session counts (\(N \ge 30\)).** The default cohort is 48 day-1 Familiar sessions (image sets G and H; 38 G, 10 H). Quality-filtered units from `df_units` (same grouped acronyms as above). Sessions with at least 30 neurons:
+
+| Area / pair | Sessions |
+|---|---|
+| LGd | 16 |
+| VISpl (primary + lateral) | 48 |
+| VISm (medial) | 47 |
+| SCMRN (SCm/MRN) | 31 |
+| LGd and VISpl | 16 |
+| VISpl and VISm | 47 |
+| VISm and SCMRN | 31 |
+| VISpl and SCMRN | 31 |
+
+Geometry and lick decoding use the paired VIS–SCMRN counts (\(n=31\)). Image identity on set G is a subset (LGd → VISpl \(n=13\)).
+
 ## Neuron-order contract (do not break)
 
 `df_units` is sorted by `probe_vertical_position` descending, then `reset_index()` so index is `0 … N-1`.

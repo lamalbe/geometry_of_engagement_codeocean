@@ -39,8 +39,8 @@ SVD_CLOUD_N_DIMS_3D = 3
 SVD_CLOUD_SCATTER_ALPHA = 0.7
 SVD_CLOUD_SCATTER_SIZE = 10
 ACTIVE_COLORS_BY_AREA = {
-    "VISm": {True: "#5AA02C", False: "#57CC99"},
-    "SCMRN": {True: "#5AA02C", False: "#57CC99"},
+    "VISm": {True: "#00AA88", False: "#0080A6"},
+    "SCMRN": {True: "#5AA02C", False: "#BD94C3"},
 }
 #ACTIVE_COLORS_BY_AREA = {
 #    "VISm": {True: "#000080", False: "#0000D4"},
