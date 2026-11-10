@@ -44,9 +44,6 @@ What to look for
   passive) argue for a condition offset, not a slow slope.
 - Active/passive ratio of window-averaged PR/N, one point per
   (session_id, image_name), still away from 1 after discarding the first 5 min.
-- Last 11 min of active vs first 11 min of kept passive, paired per
-  (session_id, image_name). If the gap survives, “later in the day” is a
-  weak account.
 
 A jump at the block switch with flat traces on either side is evidence
 against slow drift. A slope that continues through the switch would be
@@ -54,9 +51,10 @@ the worrying pattern.
 
 Outputs
 -------
-Optional cache: clean_scripts/data/suppl_stats_PR_timewindows.pk
-Figures: clean_scripts/results/
+Optional cache: data/suppl_stats_PR_timewindows.pk
+Figures: results/suppl_PR_timewindows/
 """
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -66,19 +64,23 @@ import pandas as pd
 import seaborn as sns
 from scipy import stats
 
-ALLEN_DATA_DIR = Path("/data/allen_engagement_data")
-
 try:
     _SCRIPT_DIR = Path(__file__).resolve().parent
 except NameError:
     _SCRIPT_DIR = Path.cwd()
 
-DATA_DIR = _SCRIPT_DIR.parent / "data"
-RESULTS_DIR = _SCRIPT_DIR.parent / "results"
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
+
+ALLEN_DATA_DIR = config.ALLEN_PREPROCESSED_DIR
+DATA_DIR = config.DATA_DIR
+RESULTS_DIR = config.results_dir("suppl_PR_timewindows")
 STATS_FILE = DATA_DIR / "suppl_stats_PR_timewindows.pk"
 
 SAVE_PLOTS = True
-SHOW_PLOTS = False
+SHOW_PLOTS = True
 FORCE_REBUILD = False
 MIN_UNITS = 30
 MIN_BINS = 200
@@ -389,6 +391,7 @@ def load_or_build_stats():
 
 def plot_pr_vs_time(df_win):
     hue_order = [True, False]
+    x_order = sorted(df_win["t_center_min"].dropna().unique().tolist())
     n_a = len(AREA_ORDER)
     fig, axes = plt.subplots(
         1, n_a, figsize=(4.0 * n_a, 4.2), sharex=True, sharey=True, squeeze=False
@@ -396,20 +399,27 @@ def plot_pr_vs_time(df_win):
     for idx, (ax, area) in enumerate(zip(axes.flat, AREA_ORDER)):
         d = df_win[df_win["area"] == area]
         pal = PALETTE_MAP[area]
-        sns.lineplot(
+        sns.pointplot(
             data=d,
             x="t_center_min",
             y="PR_norm",
             hue="active",
             hue_order=hue_order,
+            order=x_order,
             palette=[pal[h] for h in hue_order],
             errorbar="se",
+            dodge=0.25,
+            markersize=4.5,
+            capsize=0.12,
+            err_kws={"linewidth": 1.8},
             ax=ax,
             legend=(idx == 0),
         )
         ax.set_title(area, fontsize=12)
         ax.set_xlabel("Time into block (min)")
         ax.set_ylabel("PR / N" if idx == 0 else "")
+        ax.set_xticks(range(len(x_order)))
+        ax.set_xticklabels([f"{t:g}" for t in x_order])
         if idx == 0 and ax.get_legend() is not None:
             sns.move_legend(ax, "upper left", bbox_to_anchor=(1.02, 1), title="active")
     fig.suptitle(
@@ -443,39 +453,6 @@ def plot_ratio_box(df_win):
         filename="suppl_PR_timewindows_ratio_box.pdf",
         ttest_label="window-averaged PR/N, active/passive (session × image)",
     )
-
-
-def adjacent_epoch_table(df_win):
-    """Last 11 min of active vs first 11 min of kept passive.
-
-    One row per (session_id, image_name, area).
-    """
-    adj_rows = []
-    for (session_id, image_name, area), g in df_win.groupby(
-        ["session_id", "image_name", "area"], sort=False
-    ):
-        g_act = g[g["active"] == True].sort_values("epoch_id")
-        g_pas = g[g["active"] == False].sort_values("epoch_id")
-        if g_act.empty or g_pas.empty:
-            continue
-        last_act = g_act.iloc[-1]
-        first_pas = g_pas.iloc[0]
-        adj_rows.append(
-            {
-                "session_id": session_id,
-                "image_name": image_name,
-                "area": area,
-                "PR_norm_late_active": last_act["PR_norm"],
-                "PR_norm_early_passive": first_pas["PR_norm"],
-            }
-        )
-    df_adj = pd.DataFrame(adj_rows)
-    if df_adj.empty:
-        return df_adj
-    df_adj["ratio"] = (
-        df_adj["PR_norm_late_active"] / df_adj["PR_norm_early_passive"]
-    )
-    return df_adj
 
 
 def _plot_filled_ratio_box(wide, ylabel, title, filename, ttest_label):
@@ -520,81 +497,10 @@ def _plot_filled_ratio_box(wide, ylabel, title, filename, ttest_label):
     _save_fig(fig, filename)
 
 
-def plot_late_active_vs_early_passive(df_win):
-    df_adj = adjacent_epoch_table(df_win)
-    if df_adj.empty:
-        return
-
-    n_a = len(AREA_ORDER)
-    fig, axes = plt.subplots(
-        1, n_a, figsize=(3.6 * n_a, 3.8), sharex=False, sharey=False, squeeze=False
-    )
-    shared_lims = []
-    for idx, (ax, area) in enumerate(zip(axes.flat, AREA_ORDER)):
-        d = df_adj[df_adj["area"] == area]
-        if not d.empty:
-            ax.scatter(
-                d["PR_norm_late_active"],
-                d["PR_norm_early_passive"],
-                s=28,
-                c=AREA_FILL[area],
-                marker="o",
-                alpha=0.75,
-                edgecolors="black",
-                linewidths=0.4,
-                zorder=3,
-            )
-        vals = pd.concat(
-            [d["PR_norm_late_active"], d["PR_norm_early_passive"]], ignore_index=True
-        ).dropna()
-        if vals.empty:
-            shared_lims.append(None)
-            continue
-        lo, hi = float(vals.min()), float(vals.max())
-        pad = 0.05 * (hi - lo) if hi > lo else 0.01
-        lo, hi = lo - pad, hi + pad
-        ax.plot([lo, hi], [lo, hi], ls="--", c="k", lw=1, zorder=0)
-        ax.set_box_aspect(1)
-        ax.set_title(area, fontsize=12)
-        ax.set_xlabel("Late active PR/N")
-        ax.set_ylabel("Early passive PR/N" if idx == 0 else "")
-        shared_lims.append((lo, hi))
-    fig.suptitle(
-        "Last 11 min of active vs first 11 min of kept passive "
-        "(one point per session × image)",
-        y=1.03,
-        fontsize=12,
-    )
-    fig.tight_layout()
-    for ax, lims in zip(axes.flat, shared_lims):
-        if lims is None:
-            continue
-        lo, hi = lims
-        ax.set_xlim(lo, hi)
-        ax.set_ylim(lo, hi)
-        ticks = ax.get_xticks()
-        ticks = ticks[(ticks >= lo) & (ticks <= hi)]
-        ax.set_xticks(ticks)
-        ax.set_yticks(ticks)
-    _save_fig(fig, "suppl_PR_timewindows_late_active_vs_early_passive.pdf")
-
-    _plot_filled_ratio_box(
-        df_adj,
-        ylabel="Late active / early passive PR/N",
-        title=(
-            "Last 11 min of active / first 11 min of kept passive "
-            "(one point per session × image)"
-        ),
-        filename="suppl_PR_timewindows_late_active_vs_early_passive_ratio_box.pdf",
-        ttest_label="late active / early passive PR/N (session × image)",
-    )
-
-
 if __name__ == "__main__":
     df_win = load_or_build_stats()
     if df_win.empty:
         raise SystemExit("No time-window PR rows; nothing to plot.")
     plot_pr_vs_time(df_win)
     plot_ratio_box(df_win)
-    plot_late_active_vs_early_passive(df_win)
 # %%

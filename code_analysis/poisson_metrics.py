@@ -2,19 +2,20 @@
 """
 Analysis of area-level Poisson / sparsity statistics (df_poisson_stats).
 
-Loads full and subsampled dataframes from clean_scripts/data
+Loads full and subsampled dataframes from data/
 (df_poisson_stats.pk, df_poisson_stats_subsampled.pk). Derives Treves–Rolls
 sparsity of mean rates (TR_emp), of spike-count variances
 (spikecount_var_sparsity), Fano-like sparsity (a_sparsity), and mean network
 rate (R_emp). Diagnostic plots use the non-subsampled table. Ratio boxplots
 average those metrics over subsample_id (200-bin chunks), then take
 active/passive ratios, matching vis_circuit_metrics.py. Figures go to
-clean_scripts/results.
+results/poisson_metrics/.
 
 Sparsity uses (mean x)^2 / mean(x^2), equivalent to (sum x)^2 / sum(x^2) after
 normalizing by the number of neurons.
 """
 
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -42,8 +43,13 @@ try:
 except NameError:
     _SCRIPT_DIR = Path.cwd()
 
-DATA_DIR = _SCRIPT_DIR.parent / "data"
-RESULTS_DIR = _SCRIPT_DIR.parent / "results"
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
+
+DATA_DIR = config.DATA_DIR
+RESULTS_DIR = config.results_dir("poisson_metrics")
 
 # %%
 # hue='active' colors by area — use palette=palette_for_area(area) in seaborn
@@ -115,7 +121,7 @@ def _rasterize_scatter_collections(fig):
 
 
 def save_plot(fig, filename, *, rasterize_scatter=False):
-    """Save figure to clean_scripts/results when SAVE_PLOTS is True."""
+    """Save figure to results/poisson_metrics when SAVE_PLOTS is True."""
     if not SAVE_PLOTS:
         return
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)

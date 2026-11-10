@@ -1,5 +1,7 @@
 # %%
 import os
+import sys
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -10,9 +12,13 @@ try:
 except NameError:
     _BASE_DIR = os.getcwd()
 
-# Project-level results/ (sibling of tempt/)
-_PROJECT_ROOT = os.path.dirname(_BASE_DIR) if os.path.basename(_BASE_DIR) == "tempt" else _BASE_DIR
-output_dir = os.path.join(_PROJECT_ROOT, "results")
+_ROOT = os.path.dirname(_BASE_DIR)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+import config
+
+output_dir = str(config.results_dir("theory_plots"))
 
 # %%
 # ---------------------------------------------------------------------------
@@ -32,7 +38,7 @@ GAMMA_S_VALS = np.linspace(1.0, float(M), 30)
 
 # Mean source eigenvalue Tr(Sigma_s)/M; total variance = mean * M
 TR_OVER_M_VALS = np.linspace(0.0, 2.0, 30)
-V_SCALE_VALS = [0.1, 1.0, 5.0]  # V = scale / M
+V_SCALE_VALS = [0.5, 1.0, 5.0]  # V = scale / M
 G_FIXED_V_SWEEPS = 0.5
 G_FIXED_GAMMA_SWEEP = 0.6
 GAMMA_S_FIXED = 0.2 * M
@@ -47,13 +53,13 @@ PALETTE_G = {
 # PALETTE_V = {
 #     5.0: "#880D1E",  # highest V
 #     1.0: "#F26A8D",
-#     0.1: "#CBEEF3",  # lowest V
+#     0.5: "#CBEEF3",  # lowest V
 # }
 
 PALETTE_V = {
     5.0: "#CE4257",  # highest V
     1.0: "#F26A8D",
-    0.1: "#880D1E",  # lowest V
+    0.5: "#880D1E",  # lowest V
 }
 
 # %%
@@ -91,8 +97,8 @@ def draw_lognormal_source_eigenvalues(xi_e, gamma_s, m):
 def v_label(v_scale):
     if v_scale == 1.0:
         return r"$V=1/M$"
-    if v_scale == 0.1:
-        return r"$V=0.1/M$"
+    if v_scale == 0.5:
+        return r"$V=0.5/M$"
     return rf"$V={v_scale:g}/M$"
 
 

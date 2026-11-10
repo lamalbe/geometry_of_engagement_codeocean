@@ -4,12 +4,13 @@
 Day-1 Familiar sessions (image sets G and H). Viewing bins use
 time_from_stimulus >= 0.1 s; omitted, novel, and change presentations dropped.
 
-Reads:  /data/allen_engagement_data/day1/<session_id>/df_activity.pk
-Writes: clean_scripts/data/df_behavior.pk
-        clean_scripts/results/*.pdf
+Reads:  ALLEN_PREPROCESSED_DIR/day1/<session_id>/df_activity.pk
+Writes: data/df_behavior.pk
+        results/suppl_behavior_session/*.pdf
 """
 import multiprocessing
 import random
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -17,17 +18,21 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-ALLEN_DATA_DIR = Path("/data/allen_engagement_data")
-TIME_FROM_STIMULUS_MIN = 0.1
-MAX_TIME = 60 * 60 + 20  # seconds
-
 try:
     _SCRIPT_DIR = Path(__file__).resolve().parent
 except NameError:
     _SCRIPT_DIR = Path.cwd()
 
-DATA_DIR = _SCRIPT_DIR.parent / "data"
-RESULTS_DIR = _SCRIPT_DIR.parent / "results"
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
+
+ALLEN_DATA_DIR = config.ALLEN_PREPROCESSED_DIR
+DATA_DIR = config.DATA_DIR
+RESULTS_DIR = config.results_dir("suppl_behavior_session")
+TIME_FROM_STIMULUS_MIN = 0.1
+MAX_TIME = 60 * 60 + 20  # seconds
 SAVE_PLOTS = True
 
 
@@ -387,7 +392,7 @@ def kde_with_terciles(ax, values, title, xlabel, *, nonnegative=False, xlim_righ
 # MAIN
 # --------------------------------------------------------------------
 
-if __name__ == "__main__":
+def _write_behavior_table(out_file):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -435,9 +440,22 @@ if __name__ == "__main__":
     ]
     df_behavior = df_behavior[[c for c in keep_cols if c in df_behavior.columns]]
 
-    out_file = DATA_DIR / "df_behavior.pk"
     df_behavior.to_pickle(out_file)
     print(f"Saved {len(df_behavior)} rows to {out_file}")
+
+
+if __name__ == "__main__":
+    out_file = DATA_DIR / "df_behavior.pk"
+    sessions_file = ALLEN_DATA_DIR / "df_sessions.pk"
+    if out_file.exists() and not config.RUN_FROM_RAW:
+        print(f"Using existing {out_file}")
+    elif not sessions_file.exists():
+        print("SKIP suppl_behavior_session.py")
+        print(f"  missing {sessions_file}")
+        print(f"  missing {out_file}")
+        raise SystemExit(0)
+    else:
+        _write_behavior_table(out_file)
 
 # %%
 # -----------------------------------------------------------------------
@@ -472,7 +490,8 @@ df_behavior["end_time"] = df_behavior["end_time"].clip(upper=MAX_TIME)
 # ============================================================
 # SETTINGS
 # ============================================================
-PLOT_RANDOM_SESSION = True   # True: one random session, False: all sessions
+PLOT_RANDOM_SESSION = True   # True: one session, False: all sessions
+EXAMPLE_SESSION_SEED = 0      # fixes the example session across runs
 
 LICK_BIN_SEC = 1              # time resolution of lick-rate signal
 REWARD_BIN_SEC = 1            # time resolution of reward-rate signal
@@ -485,7 +504,8 @@ MIN_DISENGAGED_SEC = 90       # minimum duration of disengagement interval
 # ============================================================
 session_ids = df_behavior["session_id"].unique()
 if PLOT_RANDOM_SESSION:
-    session_ids = [random.choice(session_ids)]
+    random.seed(EXAMPLE_SESSION_SEED)
+    session_ids = [random.choice(list(session_ids))]
 
 # ============================================================
 # PLOTTING LOOP
@@ -657,133 +677,4 @@ for (session_id, active), df_ses in df_view.groupby(["session_id", "active"], dr
     save_fig(fig, f"session_{session_id}_{act_label}_terciles.pdf")
     plt.show()
 
-# %%
-# --------------------------------------------------------------------
-# AVERAGE METRICS
-# --------------------------------------------------------------------
-
-sns.set_theme(style="white")
-
-data_filter = (
-    (df_behavior_all.view_flag == False)
-    & (df_behavior_all.experience_level == "Familiar")
-    & (df_behavior_all.session_number == 1)
-)
-df_behavior = df_behavior_all[data_filter].copy()
-
-summary_rows = []
-
-for (session_id, active), df_ses in df_behavior.groupby(["session_id", "active"], dropna=False):
-    speed_dict = merge_dicts(df_ses["speed_values"]) if "speed_values" in df_ses else {}
-    pupil_dict = merge_dicts(df_ses["pupil_values"]) if "pupil_values" in df_ses else {}
-    licks_dict = merge_dicts(df_ses["licks_values"]) if "licks_values" in df_ses else {}
-    rewards_dict = merge_dicts(df_ses["rewards_values"]) if "rewards_values" in df_ses else {}
-
-    _, speed_v = dict_to_arrays(speed_dict, drop_below=0)
-    _, pupil_v = dict_to_arrays(pupil_dict)
-    lick_t = dict_to_event_times(licks_dict, positive_only=True)
-    reward_t = dict_to_event_times(rewards_dict, positive_only=True)
-
-    duration_sec = compute_session_duration_from_dicts(
-        speed_dict, pupil_dict, licks_dict, rewards_dict
-    )
-
-    summary_rows.append(
-        {
-            "session_id": session_id,
-            "active": active,
-            "avg_speed": mean_positive(speed_v),
-            "avg_pupil": mean_positive(pupil_v),
-            "avg_lick_rate": compute_average_event_rate(lick_t, duration_sec),
-            "avg_reward_rate": compute_average_event_rate(reward_t, duration_sec),
-            "duration_sec": duration_sec,
-        }
-    )
-
-df_summary = pd.DataFrame(summary_rows)
-df_summary = df_summary[df_summary["active"].isin([True, False])].copy()
-
-print(df_summary.head())
-
-df_active = df_summary[df_summary["active"] == True].copy()
-df_passive = df_summary[df_summary["active"] == False].copy()
-
-speed_vals_combined = pd.concat(
-    [df_active["avg_speed"], df_passive["avg_speed"]], ignore_index=True
-).to_numpy(dtype=float)
-speed_vals_combined = speed_vals_combined[np.isfinite(speed_vals_combined)]
-speed_vals_combined = speed_vals_combined[speed_vals_combined > 0]
-speed_xmax = np.nanmax(speed_vals_combined) if len(speed_vals_combined) else None
-
-pupil_vals_combined = pd.concat(
-    [df_active["avg_pupil"], df_passive["avg_pupil"]], ignore_index=True
-).to_numpy(dtype=float)
-pupil_vals_combined = pupil_vals_combined[np.isfinite(pupil_vals_combined)]
-pupil_vals_combined = pupil_vals_combined[pupil_vals_combined > 0]
-pupil_xmax = np.nanmax(pupil_vals_combined) if len(pupil_vals_combined) else None
-
-reward_vals_active = df_active["avg_reward_rate"].to_numpy(dtype=float)
-reward_vals_active = reward_vals_active[np.isfinite(reward_vals_active)]
-reward_vals_active = reward_vals_active[reward_vals_active > 0]
-reward_xmax = np.nanmax(reward_vals_active) if len(reward_vals_active) else None
-
-lick_vals_active = df_active["avg_lick_rate"].to_numpy(dtype=float)
-lick_vals_active = lick_vals_active[np.isfinite(lick_vals_active)]
-lick_vals_active = lick_vals_active[lick_vals_active > 0]
-lick_xmax = np.nanmax(lick_vals_active) if len(lick_vals_active) else None
-
-fig, axes = plt.subplots(2, 3, figsize=(16, 8))
-axes = axes.ravel()
-
-kde_rug_positive(
-    axes[0],
-    df_active["avg_speed"].values,
-    title="Active=True | Average speed",
-    xlabel="average speed",
-    xlim_right=speed_xmax,
-)
-
-kde_rug_positive(
-    axes[1],
-    df_active["avg_pupil"].values,
-    title="Active=True | Average pupil",
-    xlabel="average pupil",
-    xlim_right=pupil_xmax,
-)
-
-kde_rug_positive(
-    axes[2],
-    df_active["avg_reward_rate"].values,
-    title="Active=True | Average reward rate",
-    xlabel="average reward rate (events/s)",
-    xlim_right=reward_xmax,
-)
-
-kde_rug_positive(
-    axes[3],
-    df_active["avg_lick_rate"].values,
-    title="Active=True | Average lick rate",
-    xlabel="average lick rate (events/s)",
-    xlim_right=lick_xmax,
-)
-
-kde_rug_positive(
-    axes[4],
-    df_passive["avg_speed"].values,
-    title="Active=False | Average speed",
-    xlabel="average speed",
-    xlim_right=speed_xmax,
-)
-
-kde_rug_positive(
-    axes[5],
-    df_passive["avg_pupil"].values,
-    title="Active=False | Average pupil",
-    xlabel="average pupil",
-    xlim_right=pupil_xmax,
-)
-
-plt.tight_layout()
-save_fig(fig, "behavior_kde_summary.pdf")
-plt.show()
 # %%

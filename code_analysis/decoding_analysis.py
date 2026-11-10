@@ -2,7 +2,7 @@
 """
 Lick decoding relative to VIS–SCMRN communication subspaces.
 
-Reads clean_scripts/data/df_decoding.pk (from generate_decoding.py).
+Reads data/df_decoding.pk (from generate_decoding.py).
 Cohort: day-1 Familiar, image sets G and H, viewing bins with
 time_from_stimulus >= 0.1 s, non-change, non-novel, non-omitted, N >= 30.
 Labels are licks on non-change images, not change reports.
@@ -26,11 +26,12 @@ Main figures (VISm → SCMRN): readout boxes and communication vs PCA scatter.
 Supplementary: passive/no-lick readouts, other scatters, alpha_k, and the
 same set for VISpl → SCMRN (_vispl_scmrn).
 
-Figures: clean_scripts/results/decoding_*.pdf
-Tables:  clean_scripts/data/df_decoding_{repeat,session,alpha_session}.pk
+Figures: results/decoding_analysis/decoding_*.pdf
+Tables:  data/df_decoding_{repeat,session,alpha_session}.pk
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -77,8 +78,13 @@ try:
 except NameError:
     _SCRIPT_DIR = Path.cwd()
 
-DATA_DIR = _SCRIPT_DIR.parent / "data"
-RESULTS_DIR = _SCRIPT_DIR.parent / "results"
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
+
+DATA_DIR = config.DATA_DIR
+RESULTS_DIR = config.results_dir("decoding_analysis")
 activity_file = DATA_DIR / "df_decoding.pk"
 REPEAT_FILE = DATA_DIR / "df_decoding_repeat.pk"
 SESSION_FILE = DATA_DIR / "df_decoding_session.pk"
@@ -1107,7 +1113,7 @@ def load_activity() -> pd.DataFrame:
     if not activity_file.exists():
         raise FileNotFoundError(
             f"Missing {activity_file}. Run "
-            "clean_scripts/code_gendata/generate_decoding.py first."
+            "code_gendata/generate_decoding.py first."
         )
     df_activity = pd.read_pickle(activity_file)
     missing = [a for a in ALL_AREAS if a not in set(df_activity["area"].unique())]

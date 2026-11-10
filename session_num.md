@@ -53,4 +53,19 @@ Single cortical areas use the Allen acronym as-is: VISp, VISrl, VISl, VISal, VIS
 | VISpl, VISm | 47 |
 | VISm, SCMRN | 31 |
 
-Image-identity decoding on set G is a subset of LGd → VISpl: **\(n=13\)**.
+Image-identity decoding on set G is a subset of LGd → VISpl: **\(n=13\)**. VIS → SCm/MRN image-identity decoding (set G, \(N \ge 30\) in both areas): **\(n=26\)**. The additional VISpl → SCm/MRN paired analyses also retain **\(n=31\)**.
+
+## Within-block unengagement
+
+Sessions with at least 12 min of lick-rate-defined unengagement in the active block: **12**.
+
+Among those sessions, quality-filtered units with \(N \ge 30\):
+
+| Area | Sessions |
+|---|---|
+| VISp | 12 |
+| VISrl | 10 |
+| VISl | 10 |
+| VISal | 12 |
+| VISpm | 12 |
+| VISam | 11 |

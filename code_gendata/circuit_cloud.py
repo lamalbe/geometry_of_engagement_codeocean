@@ -16,8 +16,9 @@ into circuit labels (not always Allen acronyms):
 
 For each session, area, and image, one 3D PCA plot shows the stimulus-evoked
 active and passive clouds. Figures are written to
-clean_scripts/results/circuit_clouds/<area>/.
+results/circuit_clouds/<area>/.
 """
+import sys
 from pathlib import Path
 import re
 
@@ -26,6 +27,16 @@ import pandas as pd
 import random
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
+
+try:
+    _SCRIPT_DIR = Path(__file__).resolve().parent
+except NameError:
+    _SCRIPT_DIR = Path.cwd()
+
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
 # %%
 # ----------------------------
 # NEURAL ACTIVITY POINT CLOUDS
@@ -38,9 +49,8 @@ Image set: Indicates whether image set G or H was shown during a particular sess
 Experience level: Indicates whether the image set shown was familiar to the mouse from training or novel.
 """
 
-ALLEN_DATA_DIR = Path('/data/allen_engagement_data')
-RESULTS_DIR = Path(__file__).resolve().parent.parent / 'results' / 'circuit_clouds'
-RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+ALLEN_DATA_DIR = config.ALLEN_PREPROCESSED_DIR
+RESULTS_DIR = config.results_dir("circuit_clouds")
 
 np.random.seed(51)
 random.seed(51)

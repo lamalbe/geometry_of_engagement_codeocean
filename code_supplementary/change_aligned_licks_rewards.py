@@ -5,9 +5,10 @@ Each page is one session. Rows are hit change trials (epochs). Window is
 ±2 s around image-change onset. Gray bars are non-change flashes; the
 change flash is blue. Black ticks are licks; red diamonds are rewards.
 
-Reads:  /data/allen_engagement_data/day1/<session_id>/{df_presentations,df_licks,df_rewards}.pk
-Writes: clean_scripts/results/change_aligned_licks_rewards_day1.pdf
+Reads:  ALLEN_PREPROCESSED_DIR/day1/<session_id>/{df_presentations,df_licks,df_rewards}.pk
+Writes: results/change_aligned_licks_rewards/change_aligned_licks_rewards_day1.pdf
 """
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -17,7 +18,17 @@ from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-ALLEN_DATA_DIR = Path("/data/allen_engagement_data")
+try:
+    _SCRIPT_DIR = Path(__file__).resolve().parent
+except NameError:
+    _SCRIPT_DIR = Path.cwd()
+
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
+
+ALLEN_DATA_DIR = config.ALLEN_PREPROCESSED_DIR
 N_SESSIONS = 20
 TIME_BEFORE = 1.0
 TIME_AFTER = 4.0
@@ -28,12 +39,7 @@ CHANGE_BLUE = "#BFD7EA"
 LICK_COLOR = "0.15"
 REWARD_COLOR = "#C0392B"
 
-try:
-    _SCRIPT_DIR = Path(__file__).resolve().parent
-except NameError:
-    _SCRIPT_DIR = Path.cwd()
-
-RESULTS_DIR = _SCRIPT_DIR.parent / "results"
+RESULTS_DIR = config.results_dir("change_aligned_licks_rewards")
 SAVE_PLOTS = True
 
 

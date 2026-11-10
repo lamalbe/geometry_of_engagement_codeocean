@@ -18,7 +18,7 @@ whether that scaling differs across visual cortex, LGd, and midbrain.
 
 Method
 ------
-Uses clean_scripts/data/df_stats_area.pk (from generate_covar_stats.py).
+Uses data/df_stats_area.pk (from generate_covar_stats.py).
 No new pickle is written.
 
 Cohort (same as the other analysis notebooks):
@@ -32,8 +32,9 @@ curves is taken across session–image pairs (not across sessions after
 collapsing images). Moments are averaged before the nonlinear PR formula;
 we do not average PR and then plot.
 
-Figures: clean_scripts/results.
+Figures: results/suppl_PR_extrapolated/.
 """
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -46,8 +47,13 @@ try:
 except NameError:
     _SCRIPT_DIR = Path.cwd()
 
-DATA_DIR = _SCRIPT_DIR.parent / "data"
-RESULTS_DIR = _SCRIPT_DIR.parent / "results"
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
+
+DATA_DIR = config.DATA_DIR
+RESULTS_DIR = config.results_dir("suppl_PR_extrapolated")
 STATS_FILE = DATA_DIR / "df_stats_area.pk"
 
 SAVE_PLOTS = True
@@ -79,7 +85,7 @@ DEFAULT_COLORS = {True: "#34A0A4", False: "#48CAE4"}
 # -------------
 if not STATS_FILE.exists():
     raise FileNotFoundError(
-        f"Missing {STATS_FILE}. Run clean_scripts/code_gendata/generate_covar_stats.py "
+        f"Missing {STATS_FILE}. Run code_gendata/generate_covar_stats.py "
         "to write df_stats_area.pk."
     )
 

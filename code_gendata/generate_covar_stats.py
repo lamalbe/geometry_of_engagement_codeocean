@@ -1,11 +1,22 @@
 # %%
+import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import multiprocessing
 
-from pathlib import Path
+try:
+    _SCRIPT_DIR = Path(__file__).resolve().parent
+except NameError:
+    _SCRIPT_DIR = Path.cwd()
 
-ALLEN_DATA_DIR = Path('/data/allen_engagement_data')
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
+
+ALLEN_DATA_DIR = config.ALLEN_PREPROCESSED_DIR
 
 # Label, then the structure acronyms that belong to that label.
 # VISpl / VISm / SCMRN are grouped labels, not Allen acronyms.
@@ -181,7 +192,7 @@ def process_session_general(session_id, session_number, experience_level, image_
 # experience level: tells you whether the image set used for a particular recording was the same
 # as the training image set (Familiar), or different from the training image set (Novel).
 if __name__ == '__main__':
-    data_dir = Path(__file__).resolve().parent.parent / 'data'
+    data_dir = config.DATA_DIR
     data_dir.mkdir(parents=True, exist_ok=True)
 
     df_sessions = pd.read_pickle(ALLEN_DATA_DIR / 'df_sessions.pk')
@@ -199,10 +210,3 @@ if __name__ == '__main__':
     df_stats = pd.concat(results, ignore_index=True)
     df_stats.to_pickle(data_dir / 'df_stats_area.pk')
     print(f"Saved {data_dir / 'df_stats_area.pk'}")
-# %%
-# Dummy test plot
-import seaborn as sns
-data_dir = Path(__file__).resolve().parent.parent / 'data'
-load_df = pd.read_pickle(data_dir / 'df_stats_area.pk')
-sns.catplot(data=load_df, x='area', y='PR_emp', hue='active', kind='box')
-# %%

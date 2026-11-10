@@ -9,8 +9,9 @@ Reproduces:
   - Overlap scatterplots (active ↔ passive capture)
 
 Observations are (session_id, image_name) pairs. Figures:
-  results/suppl_alignment_VISpl_to_SCMRN_*.pdf
+  results/suppl_alignment_VISpl_SCMRN/suppl_alignment_VISpl_to_SCMRN_*.pdf
 """
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -35,8 +36,13 @@ try:
 except NameError:
     _SCRIPT_DIR = Path.cwd()
 
-DATA_DIR = _SCRIPT_DIR.parent / "data"
-RESULTS_DIR = _SCRIPT_DIR.parent / "results"
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
+
+DATA_DIR = config.DATA_DIR
+RESULTS_DIR = config.results_dir("suppl_alignment_VISpl_SCMRN")
 results_dir = RESULTS_DIR
 
 
@@ -455,115 +461,6 @@ g_pr_ratio_kde.figure.suptitle(
 for ax in g_pr_ratio_kde.axes.flat:
     ax.axvline(1.0, ls="--", c="k", lw=1, zorder=0)
 _save_fig(g_pr_ratio_kde.figure, f"{FILE_PREFIX}_pr_sv_ratio_kde.pdf")
-
-# %%
-# --------------------------------------
-#   PC SPECTRA (first 5 eigenvalues)
-# --------------------------------------
-df_pc_spectrum = df_basis_vectors[
-    (df_basis_vectors["basis_type"] == "PC")
-    & (df_basis_vectors["channel"] == CHANNEL)
-    & (df_basis_vectors["area"] == SOURCE_AREA)
-    & (df_basis_vectors["component_rank"] <= PC_K_MAX)
-].copy()
-df_pc_spectrum["component_rank"] = pd.Categorical(
-    df_pc_spectrum["component_rank"],
-    categories=list(range(1, PC_K_MAX + 1)),
-    ordered=True,
-)
-
-g_pc_spectrum = sns.catplot(
-    data=df_pc_spectrum,
-    x="component_rank",
-    y="eigenvalue",
-    hue="active",
-    hue_order=[True, False],
-    kind="point",
-    errorbar="se",
-    palette=AP_PALETTE,
-    linestyle="none",
-    capsize=0.12,
-    height=4.0,
-    aspect=1.2,
-)
-g_pc_spectrum.set_axis_labels("PC rank k", "Eigenvalue")
-g_pc_spectrum.figure.suptitle(
-    f"Local PC spectra {SOURCE_AREA} ({CHANNEL}); first {PC_K_MAX} eigenvalues; "
-    "error bars = SE over session×image",
-    y=1.02,
-)
-_save_fig(g_pc_spectrum.figure, f"{FILE_PREFIX}_pc_spectrum_point.pdf")
-
-pc_ratio_rows = []
-for (session_id, image_name, channel, area), grp in df_pc_spectrum.groupby(
-    ["session_id", "image_name", "channel", "area"], sort=False
-):
-    for k in range(1, PC_K_MAX + 1):
-        act_vals = grp.loc[
-            (grp["active"] == True) & (grp["component_rank"] == k), "eigenvalue"
-        ]
-        pas_vals = grp.loc[
-            (grp["active"] == False) & (grp["component_rank"] == k), "eigenvalue"
-        ]
-        if act_vals.empty or pas_vals.empty:
-            continue
-        lam_act = float(act_vals.iloc[0])
-        lam_pas = float(pas_vals.iloc[0])
-        if lam_pas == 0 or not np.isfinite(lam_act) or not np.isfinite(lam_pas):
-            continue
-        pc_ratio_rows.append(
-            {
-                "session_id": session_id,
-                "image_name": image_name,
-                "channel": channel,
-                "area": area,
-                "k": k,
-                "eigenvalue_ratio": lam_act / lam_pas,
-            }
-        )
-
-df_pc_ratio = pd.DataFrame(pc_ratio_rows)
-df_pc_ratio["k"] = pd.Categorical(
-    df_pc_ratio["k"], categories=list(range(1, PC_K_MAX + 1)), ordered=True
-)
-
-g_pc_ratio = sns.catplot(
-    data=df_pc_ratio,
-    x="k",
-    y="eigenvalue_ratio",
-    kind="point",
-    errorbar="se",
-    linestyle="none",
-    capsize=0.12,
-    height=4.0,
-    aspect=1.2,
-)
-g_pc_ratio.set_axis_labels("PC rank k", "Active / passive eigenvalue ratio")
-g_pc_ratio.figure.suptitle(
-    f"Local PC spectrum ratio {SOURCE_AREA} ({CHANNEL}); first {PC_K_MAX} eigenvalues; "
-    "error bars = SE over session×image",
-    y=1.02,
-)
-for ax in g_pc_ratio.axes.flat:
-    ax.axhline(1.0, ls="--", c=".4", lw=1, zorder=0)
-_save_fig(g_pc_ratio.figure, f"{FILE_PREFIX}_pc_spectrum_ratio_point.pdf")
-
-df_pc_ratio["k_label"] = df_pc_ratio["k"].astype(int).map(str)
-_pc_k_labels = [str(k) for k in range(1, PC_K_MAX + 1)]
-plot_filled_boxes(
-    df_pc_ratio,
-    y_col="eigenvalue_ratio",
-    categories=_pc_k_labels,
-    colors={lab: SV_RATIO_COLOR for lab in _pc_k_labels},
-    xlabel="PC rank k",
-    ylabel="Active / passive eigenvalue ratio",
-    title=f"Local PC spectrum ratio {SOURCE_AREA} ({CHANNEL})",
-    filename=f"{FILE_PREFIX}_pc_spectrum_ratio_box.pdf",
-    category_col="k_label",
-    tick_labels=_pc_k_labels,
-    mu=1.0,
-    figsize=(6, 5),
-)
 
 # %%
 # ------------------

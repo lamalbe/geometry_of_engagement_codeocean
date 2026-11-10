@@ -4,8 +4,9 @@ data/**
 results/**
 !results/.gitkeep
 
-# Local AllenSDK cache symlink (points to /data/AllenNPXVisualBehavior)
+# Local AllenSDK cache symlink (points at ALLEN_RAW_DATA_DIR)
 data/visual-behavior-neuropixels
+.allen_sdk_cache/
 
 # Python
 __pycache__/

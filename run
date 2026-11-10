@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Code Ocean entrypoint. Local use is: python run_pipeline.py
+# Derived tables attached to the capsule are mounted at /data.
+# Figures are written to /results/<script_name>/.
+
+set -euo pipefail
+cd "$(dirname "$0")"
+
+export MPLBACKEND=Agg
+export RUN_FROM_RAW="${RUN_FROM_RAW:-0}"
+export DATA_DIR="${DATA_DIR:-/data}"
+export RESULTS_DIR="${RESULTS_DIR:-/results}"
+
+python run_pipeline.py

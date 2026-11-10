@@ -1,0 +1,18 @@
+name: geometry_of_engagement
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - pandas>=2.2
+  - scipy
+  - matplotlib
+  - seaborn
+  - scikit-learn
+  - statsmodels
+  - pip
+
+# preprocess_data.py also needs allensdk. It is not part of this environment:
+# AllenSDK pins older numpy/pandas than the figure scripts. Install it only
+# for a full local run (RUN_FROM_RAW=1), in a separate environment if needed:
+#   pip install allensdk

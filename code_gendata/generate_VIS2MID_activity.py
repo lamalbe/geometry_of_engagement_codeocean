@@ -10,15 +10,26 @@ Grouped labels (not Allen acronyms):
   VISm  = {VISpm, VISam}
   SCMRN = {MRN, SCig, SCiw}
 
-Output (clean_scripts/data):
+Output (data/):
   df_cortex2mid.pk
 """
 import multiprocessing
+import sys
 from pathlib import Path
 
 import pandas as pd
 
-ALLEN_DATA_DIR = Path('/data/allen_engagement_data')
+try:
+    _SCRIPT_DIR = Path(__file__).resolve().parent
+except NameError:
+    _SCRIPT_DIR = Path.cwd()
+
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
+
+ALLEN_DATA_DIR = config.ALLEN_PREPROCESSED_DIR
 TIME_FROM_STIMULUS_MIN = 0.1  # discard first 100 ms after stimulus onset
 
 # Label, then the structure acronyms that belong to that label.
@@ -115,7 +126,7 @@ def process_session_general(session_id, session_number, experience_level, image_
 # image_set: G or H; both are kept for day-1 Familiar sessions.
 
 if __name__ == '__main__':
-    data_dir = Path(__file__).resolve().parent.parent / 'data'
+    data_dir = config.DATA_DIR
     data_dir.mkdir(parents=True, exist_ok=True)
 
     df_sessions = pd.read_pickle(ALLEN_DATA_DIR / 'df_sessions.pk')

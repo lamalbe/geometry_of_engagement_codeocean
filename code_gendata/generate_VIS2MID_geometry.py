@@ -7,6 +7,7 @@ No train/test splits, z-scoring, correlation matrices, or SVCA reliability metri
 """
 from __future__ import annotations
 
+import sys
 import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -15,6 +16,16 @@ import numpy as np
 import pandas as pd
 from scipy.linalg import svd as scipy_svd
 from scipy.optimize import linear_sum_assignment
+
+try:
+    _SCRIPT_DIR = Path(__file__).resolve().parent
+except NameError:
+    _SCRIPT_DIR = Path.cwd()
+
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
 
 # %%
 # -------------
@@ -34,7 +45,7 @@ SORT_KEYS = ["bin_start_times", "time_from_stimulus"]
 GROUP_KEYS = ("session_id", "image_name", "active")
 TIME_FROM_STIMULUS_MIN = 0.1  # discard first 100 ms after stimulus onset
 
-data_dir = Path(__file__).resolve().parent.parent / "data"
+data_dir = config.DATA_DIR
 activity_file = data_dir / "df_cortex2mid.pk"
 
 data_filter_columns_dropped = [

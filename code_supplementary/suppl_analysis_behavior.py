@@ -2,11 +2,13 @@
 """Plots for covariance stats split by unengagement and speed/pupil terciles,
 plus session-level MLR of PR on behavior and channel MLR.
 
-Reads clean_scripts/data/suppl_stats_*.pk and df_stats_area.pk.
-Writes figures to clean_scripts/results/.
+Reads data/suppl_stats_*.pk and df_stats_area.pk.
+Writes figures to results/suppl_analysis_behavior/.
 """
+import sys
 from pathlib import Path
 import importlib
+import pickle
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -20,17 +22,74 @@ try:
 except NameError:
     _SCRIPT_DIR = Path.cwd()
 
-DATA_DIR = _SCRIPT_DIR.parent / "data"
-RESULTS_DIR = _SCRIPT_DIR.parent / "results"
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
+
+DATA_DIR = config.DATA_DIR
+RESULTS_DIR = config.results_dir("suppl_analysis_behavior")
 SAVE_PLOTS = True
 SHOW_PLOTS = True
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 area_order = ['LGd', 'VISpl', 'VISm', 'SCMRN']
-# area_order = ['VISp', 'VISrl', 'VISl', 'VISal', 'VISpm', 'VISam']
+unengagement_area_order = ['VISp', 'VISrl', 'VISl', 'VISal', 'VISpm', 'VISam']
 tercile_order = ['low', 'mid', 'high']
 active_order = [True, False]
 tercile_pair_keys = ["session_id", "image_name", "active", "area", "tercile"]
+
+
+def read_pickle(path):
+    """Load a DataFrame, including pandas 3 string-column pickles."""
+    try:
+        return pd.read_pickle(path)
+    except NotImplementedError as exc:
+        if "StringDtype" not in str(exc):
+            raise
+        return _read_pickle_pandas3_strings(path)
+
+
+def _read_pickle_pandas3_strings(path):
+    """Rebuild pandas 3 StringArrays, whose pickle state is (dtype, ndarray).
+
+    pandas 2.3 NDArrayBacked.__setstate__ only accepts a 3-tuple, so those
+    columns raise NotImplementedError under pd.read_pickle.
+    """
+    from pandas._libs.arrays import NDArrayBacked
+    from pandas.core.arrays.string_ import StringArray
+
+    class _CompatStringArray(StringArray):
+        def __new__(cls):
+            return NDArrayBacked.__new__(cls)
+
+        def __setstate__(self, state):
+            if not (isinstance(state, tuple) and len(state) == 2):
+                raise NotImplementedError(state)
+            left, right = state
+            data = right if isinstance(right, np.ndarray) else left
+            rebuilt = StringArray(np.asarray(data, dtype=object))
+            NDArrayBacked.__init__(self, rebuilt._ndarray, rebuilt.dtype)
+
+    def _unpickle_ndarray_backed(cls, checksum, state):
+        if getattr(cls, "__name__", "") == "StringArray":
+            obj = _CompatStringArray.__new__(_CompatStringArray)
+            if state is not None:
+                obj.__setstate__(state)
+            return obj
+        from pandas._libs import arrays as arrays_mod
+        return arrays_mod.__pyx_unpickle_NDArrayBacked(cls, checksum, state)
+
+    class _Unpickler(pickle.Unpickler):
+        def find_class(self, module, name):
+            if name == "__pyx_unpickle_NDArrayBacked":
+                return _unpickle_ndarray_backed
+            return super().find_class(module, name)
+
+    with open(path, "rb") as handle:
+        return _Unpickler(handle).load()
+
+
 SPEED_BASE_COLOR = "#4D4D4D"
 PUPIL_BASE_COLOR = "#8E6BBE"
 
@@ -360,14 +419,17 @@ def plot_tercile_pointplots(df_avg, title_prefix, file_prefix, metric_specs, pal
 
 
 AREA_PALETTE = ["#03045E", "#023E8A", "#0077B6", "#0096C7", "#00B4D8", "#48CAE4"]
-AREA_COLORS = {area: AREA_PALETTE[i % len(AREA_PALETTE)] for i, area in enumerate(area_order)}
+AREA_COLORS = {
+    area: AREA_PALETTE[i % len(AREA_PALETTE)]
+    for i, area in enumerate(unengagement_area_order)
+}
 
 
-def _ratio_box_data(df_metric):
+def _ratio_box_data(df_metric, areas):
     box_data = []
     box_colors = []
     tick_labels = []
-    for area in area_order:
+    for area in areas:
         vals = df_metric.loc[df_metric["area"] == area, "ratio"].dropna().to_numpy()
         if len(vals) == 0:
             continue
@@ -446,12 +508,12 @@ def _finalize_ratio_fig(fig, filename):
         plt.show()
 
 
-def plot_filled_ratio_boxplots(df_ratios, metric, ylabel, filename):
+def plot_filled_ratio_boxplots(df_ratios, metric, ylabel, filename, areas):
     """Filled boxplots (vis_circuit_metrics supplementary style) of a ratio vs area."""
     df_metric = df_ratios[df_ratios["metric"] == metric].copy()
     if df_metric.empty:
         return
-    box_data, box_colors, tick_labels = _ratio_box_data(df_metric)
+    box_data, box_colors, tick_labels = _ratio_box_data(df_metric, areas)
     if not box_data:
         return
 
@@ -486,12 +548,12 @@ def plot_filled_ratio_boxplots(df_ratios, metric, ylabel, filename):
     _finalize_ratio_fig(fig, filename)
 
 
-def plot_empty_ratio_box_strip(df_ratios, metric, ylabel, filename):
+def plot_empty_ratio_box_strip(df_ratios, metric, ylabel, filename, areas):
     """Empty colored boxplots plus rasterized strip points (one per session_id, image_name)."""
     df_metric = df_ratios[df_ratios["metric"] == metric].copy()
     if df_metric.empty:
         return
-    box_data, box_colors, tick_labels = _ratio_box_data(df_metric)
+    box_data, box_colors, tick_labels = _ratio_box_data(df_metric, areas)
     if not box_data:
         return
 
@@ -544,12 +606,12 @@ def plot_empty_ratio_box_strip(df_ratios, metric, ylabel, filename):
 #  UNENGAGEMENT RAISES PR IN ACTIVE BLOCK
 # ---------------------------------------
 unengagement_file = DATA_DIR / "suppl_stats_unengagement.pk"
-df_bhvr_engaged = pd.read_pickle(unengagement_file)
+df_bhvr_engaged = read_pickle(unengagement_file)
 
 df_bhvr_engaged = df_bhvr_engaged[df_bhvr_engaged.session_has_unengaged_state==True]
 df_bhvr_engaged["N"] = df_bhvr_engaged["avgspikecounts"].apply(lambda x: np.asarray(x, dtype=float).ravel().size)
 df_bhvr_engaged = df_bhvr_engaged[df_bhvr_engaged["N"] >= 30].copy()
-df_bhvr_engaged = df_bhvr_engaged[df_bhvr_engaged["area"].isin(area_order)].copy()
+df_bhvr_engaged = df_bhvr_engaged[df_bhvr_engaged["area"].isin(unengagement_area_order)].copy()
 
 df_bhvr_engaged['mean_firing_rate'] = df_bhvr_engaged['avgspikecounts'].apply(
     lambda x: np.asarray(x, dtype=float).ravel().mean() / 0.05)
@@ -603,7 +665,7 @@ for metric in ratio_metrics:
 df_uneng_ratios = pd.concat(ratio_rows, ignore_index=True) if ratio_rows else pd.DataFrame()
 if not df_uneng_ratios.empty:
     df_uneng_ratios["area"] = pd.Categorical(
-        df_uneng_ratios["area"], categories=area_order, ordered=True
+        df_uneng_ratios["area"], categories=unengagement_area_order, ordered=True
     )
     n_dup = int(
         df_uneng_ratios.duplicated(subset=ratio_keys + ["metric"]).sum()
@@ -628,19 +690,21 @@ if not df_uneng_ratios.empty:
             metric,
             metric_ylabels[metric],
             f"suppl_covstats_with_bhvr_unengagement_{metric}_ratio_box.pdf",
+            unengagement_area_order,
         )
         plot_empty_ratio_box_strip(
             df_uneng_ratios,
             metric,
             metric_ylabels[metric],
             f"suppl_covstats_with_bhvr_unengagement_{metric}_ratio_box_strip.pdf",
+            unengagement_area_order,
         )
 # %%
 # --------------------------------------------------------------
 #  PUPIL SIZE DOES NOT AFFECT METRIC TRENDS ACROSS ACTIVE BLOCKS
 # --------------------------------------------------------------
 pupil_file = DATA_DIR / "suppl_stats_pupil_terciles.pk"
-df_bhvr_pupil = pd.read_pickle(pupil_file)
+df_bhvr_pupil = read_pickle(pupil_file)
 _require_image_name(df_bhvr_pupil, "suppl_stats_pupil_terciles.pk")
 df_bhvr_pupil["N"] = df_bhvr_pupil["avgspikecounts"].apply(lambda x: np.asarray(x, dtype=float).ravel().size)
 df_bhvr_pupil = df_bhvr_pupil[df_bhvr_pupil["N"] >= 30].copy()
@@ -665,7 +729,7 @@ df_pupil_avg = (
 #  SPEED DOES NOT AFFECT METRIC TRENDS ACROSS ACTIVE BLOCKS
 # ---------------------------------------------------------
 speed_file = DATA_DIR / "suppl_stats_speed_terciles.pk"
-df_bhvr_speed = pd.read_pickle(speed_file)
+df_bhvr_speed = read_pickle(speed_file)
 _require_image_name(df_bhvr_speed, "suppl_stats_speed_terciles.pk")
 df_bhvr_speed["N"] = df_bhvr_speed["avgspikecounts"].apply(lambda x: np.asarray(x, dtype=float).ravel().size)
 df_bhvr_speed = df_bhvr_speed[df_bhvr_speed["N"] >= 30].copy()
@@ -801,7 +865,7 @@ def fit_session_regression(df_sess, smf_module=None):
 
 
 stats_file = DATA_DIR / "df_stats_area.pk"
-df_stats_all = pd.read_pickle(stats_file)
+df_stats_all = read_pickle(stats_file)
 
 data_filter = (
     (df_stats_all.session_number == 1)
@@ -913,19 +977,6 @@ df_r2_sessions = pd.DataFrame(r2_session_records)
 df_vif_sessions = pd.DataFrame(vif_session_records)
 
 if not df_coef_sessions.empty:
-    df_coef = (
-        df_coef_sessions.groupby(["area", "term"], as_index=False)
-        .agg(
-            coef_mean=("coef", "mean"),
-            coef_std=("coef", "std"),
-            n_sessions=("session_id", "nunique"),
-        )
-    )
-    df_coef["coef_sem"] = df_coef["coef_std"] / np.sqrt(df_coef["n_sessions"].clip(lower=1))
-else:
-    df_coef = pd.DataFrame(columns=["area", "term", "coef_mean", "coef_sem", "n_sessions"])
-
-if not df_coef_sessions.empty:
     df_terms = (
         df_coef_sessions.pivot_table(
             index=["area", "session_id"],
@@ -943,9 +994,10 @@ if not df_coef_sessions.empty:
         "active:pupil_mean_z",
     }
     if required_terms.issubset(set(df_terms.columns)):
+        # Passive slope is the main effect. Full active slope is main effect + interaction.
         df_terms["speed_active_full_z"] = df_terms["speed_mean_z"] + df_terms["active:speed_mean_z"]
         df_terms["pupil_active_full_z"] = df_terms["pupil_mean_z"] + df_terms["active:pupil_mean_z"]
-        df_coef_full_active_sessions = df_terms[
+        df_coef_full_sessions = df_terms[
             [
                 "area",
                 "session_id",
@@ -960,25 +1012,25 @@ if not df_coef_sessions.empty:
             var_name="term",
             value_name="coef",
         )
-        df_coef_full_active = (
-            df_coef_full_active_sessions.groupby(["area", "term"], as_index=False)
+        df_coef_full = (
+            df_coef_full_sessions.groupby(["area", "term"], as_index=False)
             .agg(
                 coef_mean=("coef", "mean"),
                 coef_std=("coef", "std"),
                 n_sessions=("session_id", "nunique"),
             )
         )
-        df_coef_full_active["coef_sem"] = df_coef_full_active["coef_std"] / np.sqrt(
-            df_coef_full_active["n_sessions"].clip(lower=1)
+        df_coef_full["coef_sem"] = df_coef_full["coef_std"] / np.sqrt(
+            df_coef_full["n_sessions"].clip(lower=1)
         )
     else:
-        df_coef_full_active_sessions = pd.DataFrame(columns=["area", "session_id", "term", "coef"])
-        df_coef_full_active = pd.DataFrame(
+        df_coef_full_sessions = pd.DataFrame(columns=["area", "session_id", "term", "coef"])
+        df_coef_full = pd.DataFrame(
             columns=["area", "term", "coef_mean", "coef_sem", "n_sessions"]
         )
 else:
-    df_coef_full_active_sessions = pd.DataFrame(columns=["area", "session_id", "term", "coef"])
-    df_coef_full_active = pd.DataFrame(columns=["area", "term", "coef_mean", "coef_sem", "n_sessions"])
+    df_coef_full_sessions = pd.DataFrame(columns=["area", "session_id", "term", "coef"])
+    df_coef_full = pd.DataFrame(columns=["area", "term", "coef_mean", "coef_sem", "n_sessions"])
 
 if not df_r2_sessions.empty:
     df_r2 = (
@@ -1064,77 +1116,19 @@ else:
     )
     print(f"Unique session_id after VIF filtering ({len(initial_unique_session_ids)}): {initial_unique_session_ids}")
 
-# Coefficients: mean ± SEM across sessions
-if not df_coef.empty:
-    term_order = [
-        "active",
-        "speed_mean_z",
-        "active:speed_mean_z",
-        "pupil_mean_z",
-        "active:pupil_mean_z",
-    ]
-    df_coef["term"] = pd.Categorical(df_coef["term"], categories=term_order, ordered=True)
-    term_labels = {
-        "active": "active",
-        "speed_mean_z": "speed",
-        "active:speed_mean_z": "speed x active",
-        "pupil_mean_z": "pupil",
-        "active:pupil_mean_z": "pupil x active",
-    }
-
-    for area in area_order:
-        df_a = df_coef[df_coef["area"] == area].sort_values("term")
-        if df_a.empty:
-            continue
-
-        fig, ax = plt.subplots(figsize=(5.0, 4.0))
-        y = np.arange(len(df_a))
-        ax.errorbar(
-            df_a["coef_mean"],
-            y,
-            xerr=df_a["coef_sem"],
-            fmt="o",
-            color="C0",
-            capsize=3,
-        )
-        ax.axvline(0, color="black", linestyle="--", linewidth=1)
-        ax.set_yticks(y)
-        ax.set_yticklabels([term_labels.get(t, t) for t in df_a["term"]])
-        ax.set_xlabel("Coefficient (z-scored PR_emp)")
-        ax.set_ylabel("Predictor")
-        ax.set_title(f"Regression coefficients - {area}")
-        ax.set_xlim(-1.1, 1.1)
-        ax.set_xticks([-1.0, -0.5, 0.0, 0.5, 1.0])
-        df_sess_area = df_coef_sessions[df_coef_sessions["area"] == area]
-        plot_terms = df_a["term"].tolist()
-        _annotate_forest_vs_zero(ax, df_sess_area, plot_terms)
-        _print_coef_ttests(df_sess_area, f"PR~behavior {area}", plot_terms)
-        fig.tight_layout()
-
-        if SAVE_PLOTS:
-            fig.savefig(
-                RESULTS_DIR / f"suppl_covstats_with_bhvr_regression_coefficients_{area}.pdf",
-                format="pdf",
-                bbox_inches="tight",
-            )
-        if SHOW_PLOTS:
-            plt.show()
-        else:
-            plt.close(fig)
-
-# Coefficients (full active slopes): mean ± SEM across sessions
-if not df_coef_full_active.empty:
-    term_order_full_active = [
+# Full active and full passive slopes, with active kept as a predictor.
+if not df_coef_full.empty:
+    term_order_full = [
         "active",
         "speed_mean_z",
         "speed_active_full_z",
         "pupil_mean_z",
         "pupil_active_full_z",
     ]
-    df_coef_full_active["term"] = pd.Categorical(
-        df_coef_full_active["term"], categories=term_order_full_active, ordered=True
+    df_coef_full["term"] = pd.Categorical(
+        df_coef_full["term"], categories=term_order_full, ordered=True
     )
-    term_labels_full_active = {
+    term_labels_full = {
         "active": "active",
         "speed_mean_z": "speed (passive)",
         "speed_active_full_z": "speed (active full)",
@@ -1143,7 +1137,7 @@ if not df_coef_full_active.empty:
     }
 
     for area in area_order:
-        df_a = df_coef_full_active[df_coef_full_active["area"] == area].sort_values("term")
+        df_a = df_coef_full[df_coef_full["area"] == area].sort_values("term")
         if df_a.empty:
             continue
 
@@ -1159,13 +1153,13 @@ if not df_coef_full_active.empty:
         )
         ax.axvline(0, color="black", linestyle="--", linewidth=1)
         ax.set_yticks(y)
-        ax.set_yticklabels([term_labels_full_active.get(t, t) for t in df_a["term"]])
+        ax.set_yticklabels([term_labels_full.get(t, t) for t in df_a["term"]])
         ax.set_xlabel("Coefficient (z-scored PR_emp)")
         ax.set_ylabel("Predictor")
         ax.set_title(f"Regression coefficients (full active slopes) - {area}")
         ax.set_xlim(-1.1, 1.1)
         ax.set_xticks([-1.0, -0.5, 0.0, 0.5, 1.0])
-        df_sess_area = df_coef_full_active_sessions[df_coef_full_active_sessions["area"] == area]
+        df_sess_area = df_coef_full_sessions[df_coef_full_sessions["area"] == area]
         plot_terms = df_a["term"].tolist()
         _annotate_forest_vs_zero(ax, df_sess_area, plot_terms)
         _print_coef_ttests(df_sess_area, f"PR~behavior full-active {area}", plot_terms)
@@ -1182,12 +1176,12 @@ if not df_coef_full_active.empty:
         else:
             plt.close(fig)
 
-    df_scmrn = df_coef_full_active[df_coef_full_active["area"] == "SCMRN"].copy()
+    df_scmrn = df_coef_full[df_coef_full["area"] == "SCMRN"].copy()
     if not df_scmrn.empty:
         plot_forest_negative_xaxis_cut(
             df_scmrn,
-            df_coef_full_active_sessions[df_coef_full_active_sessions["area"] == "SCMRN"],
-            term_labels_full_active,
+            df_coef_full_sessions[df_coef_full_sessions["area"] == "SCMRN"],
+            term_labels_full,
             "suppl_covstats_with_bhvr_regression_coefficients_full_active_SCMRN_xaxis_cut.pdf",
             "Regression coefficients (full active slopes) - SCMRN",
             color="C1",
@@ -1222,10 +1216,8 @@ if not df_r2_sessions.empty:
     else:
         plt.close(g_r2.figure)
 
-if SAVE_PLOTS and not df_coef.empty:
-    df_coef.to_csv(RESULTS_DIR / "suppl_covstats_with_bhvr_regression_coefficients.csv", index=False)
-if SAVE_PLOTS and not df_coef_full_active.empty:
-    df_coef_full_active.to_csv(
+if SAVE_PLOTS and not df_coef_full.empty:
+    df_coef_full.to_csv(
         RESULTS_DIR / "suppl_covstats_with_bhvr_regression_coefficients_full_active.csv", index=False
     )
 if SAVE_PLOTS and not df_r2.empty:
@@ -1239,618 +1231,4 @@ if SAVE_PLOTS and not df_problematic_sessions.empty:
         RESULTS_DIR / "suppl_covstats_with_bhvr_regression_problematic_sessions.csv", index=False
     )
 
-# %%
-# ---------------------------------------------------------
-#  DOES DIMENSIONALITY STILL DRIVE?
-# ---------------------------------------------------------
-
-stats_file = DATA_DIR / "df_stats_area.pk"
-df_stats_all = pd.read_pickle(stats_file)
-
-data_filter = (
-    (df_stats_all.session_number == 1)
-    & (df_stats_all.experience_level == "Familiar")
-    & (df_stats_all.image_name != "omitted")
-    & (df_stats_all.is_image_novel == False)
-    & (df_stats_all.is_change == False)
-    & (df_stats_all.area.isin(['LGd', 'VISpl', 'VISm', 'SCMRN']))
-    & (df_stats_all.N >= 30)
-)
-
-df_stats = df_stats_all[data_filter].drop(
-    ["session_number", "experience_level", "is_image_novel", "is_change", "image_set"],
-    axis=1,
-    errors="ignore",
-).copy()
-
-df_stats = df_stats.drop(
-    ["speed_values", "pupil_values", "avgspikecounts",
-     "mii", "mij", "sii", "sij", "ciisq", "cijsq", "TS_emp", "PR_fit", "variances", "is_peak"],
-    axis=1,
-    errors="ignore",
-).copy()
-
-if "subsample_id" not in df_stats.columns:
-    df_stats["subsample_id"] = (
-        df_stats.groupby(["session_id", "active", "image_name", "area"], dropna=False).cumcount()
-    )
-
-# Average 200-bin chunks so channel rows are (session_id, image_name) pairs.
-channel_pair_keys = ["session_id", "active", "image_name", "area"]
-df_stats = (
-    df_stats.groupby(channel_pair_keys, as_index=False)
-    .agg(
-        TV_emp=("TV_emp", "mean"),
-        PR_emp=("PR_emp", "mean"),
-        N=("N", "first"),
-    )
-)
-
-channels = [
-    ("LGd", "VISpl"),
-    ("VISpl", "VISm"),
-    ("VISm", "SCMRN"),
-]
-
-channel_dfs = {}
-
-for input_area, target_area in channels:
-    df_channel = df_stats[df_stats["area"].isin([input_area, target_area])].copy()
-    df_channel["area_role"] = np.where(df_channel["area"] == input_area, "input", "target")
-
-    group_cols = ["session_id", "active", "image_name"]
-    role_size = df_channel.groupby(group_cols)["area_role"].transform("size")
-    role_unique = df_channel.groupby(group_cols)["area_role"].transform("nunique")
-    df_channel = df_channel[(role_size == 2) & (role_unique == 2)].copy()
-
-    df_channel = (
-        df_channel.pivot(
-            index=group_cols,
-            columns="area_role",
-            values=["area", "TV_emp", "PR_emp", "N"],
-        )
-        .reset_index()
-    )
-
-    df_channel.columns = [
-        c if isinstance(c, str) else "_".join([str(x) for x in c if x != ""])
-        for c in df_channel.columns
-    ]
-
-    df_channel = df_channel.rename(
-        columns={
-            "area_input": "input_area",
-            "area_target": "target_area",
-            "TV_emp_input": "input_TV",
-            "TV_emp_target": "target_TV",
-            "PR_emp_input": "input_PR",
-            "PR_emp_target": "target_PR",
-            "N_input": "N_input",
-            "N_target": "N_target",
-        }
-    )
-
-    df_channel = df_channel[
-        [
-            "session_id",
-            "active",
-            "image_name",
-            "input_area",
-            "target_area",
-            "input_TV",
-            "target_TV",
-            "input_PR",
-            "target_PR",
-            "N_input",
-            "N_target",
-        ]
-    ].copy()
-
-    channel_dfs[f"{input_area}_to_{target_area}"] = df_channel
-
-n_channel_pairs = {
-    name: df.drop_duplicates(subset=["session_id", "image_name"]).shape[0]
-    for name, df in channel_dfs.items()
-}
-print("Channel MLR unique session_id × image_name pairs:")
-for name, n_pairs in n_channel_pairs.items():
-    print(f"  {name}: {len(channel_dfs[name])} rows ({n_pairs} pairs)")
-
-df_channel_lgd_vispl = channel_dfs["LGd_to_VISpl"].copy()
-df_channel_vispl_vism = channel_dfs["VISpl_to_VISm"].copy()
-df_channel_vism_scmrn = channel_dfs["VISm_to_SCMRN"].copy()
-# %%
-# ---------------------------------------------------------
-#  CHANNEL MLR: DRIVERS OF TARGET PR / TARGET TV
-# ---------------------------------------------------------
-CHANNEL_MIN_ROWS_PER_SESSION = 8
-CHANNEL_VIF_FLAG_THRESHOLD = 5.0
-channel_order = ["LGd_to_VISpl", "VISpl_to_VISm", "VISm_to_SCMRN"]
-channel_display_labels = {
-    "LGd_to_VISpl": "LGd -> VISpl",
-    "VISpl_to_VISm": "VISpl -> VISm",
-    "VISm_to_SCMRN": "VISm -> SCMRN",
-}
-CHANNEL_MODEL_TERMS = [
-    "active",
-    "TV_input_z",
-    "PR_input_z",
-    "active:TV_input_z",
-    "active:PR_input_z",
-]
-channel_outcomes = {
-    "PR_target": "target_PR",
-    "TV_target": "target_TV",
-}
-
-channel_coef_records = []
-channel_r2_records = []
-channel_vif_records = []
-channel_session_counts = []
-
-print("Running channel MLR analysis for PR_target and TV_target.")
-
-for channel_name, df_channel in channel_dfs.items():
-    df_channel_model = df_channel.copy()
-    df_channel_model["active"] = df_channel_model["active"].astype(int)
-
-    for outcome_name, outcome_col in channel_outcomes.items():
-        skipped_sessions = 0
-        fitted_sessions = []
-
-        for session_id, df_sess in df_channel_model.groupby("session_id"):
-            if len(df_sess) < CHANNEL_MIN_ROWS_PER_SESSION:
-                skipped_sessions += 1
-                continue
-
-            df_sess = df_sess.copy()
-            df_sess["TV_input_z"] = zscore_within_group(df_sess["input_TV"], df_sess["active"])
-            df_sess["PR_input_z"] = zscore_within_group(df_sess["input_PR"], df_sess["active"])
-            df_sess["target_z"] = zscore(df_sess[outcome_col])
-
-            X = pd.DataFrame(
-                {
-                    "active": df_sess["active"].astype(float),
-                    "TV_input_z": df_sess["TV_input_z"].astype(float),
-                    "PR_input_z": df_sess["PR_input_z"].astype(float),
-                }
-            )
-            X["active:TV_input_z"] = X["active"] * X["TV_input_z"]
-            X["active:PR_input_z"] = X["active"] * X["PR_input_z"]
-            y = df_sess["target_z"].astype(float)
-
-            vif_values = {}
-            for term in X.columns:
-                y_vif = X[term]
-                X_other = X.drop(columns=[term])
-                if y_vif.std(ddof=0) == 0:
-                    vif_values[term] = np.inf
-                else:
-                    r2_vif = LinearRegression().fit(X_other, y_vif).score(X_other, y_vif)
-                    vif_values[term] = np.inf if np.isclose(1.0 - r2_vif, 0.0) else 1.0 / (1.0 - r2_vif)
-
-            max_vif = np.nanmax(list(vif_values.values())) if len(vif_values) > 0 else np.nan
-            is_problematic = (np.isfinite(max_vif) and max_vif >= CHANNEL_VIF_FLAG_THRESHOLD) or (
-                not np.isfinite(max_vif)
-            )
-
-            for term, vif in vif_values.items():
-                channel_vif_records.append(
-                    {
-                        "channel": channel_name,
-                        "outcome": outcome_name,
-                        "session_id": session_id,
-                        "n_rows": len(df_sess),
-                        "term": term,
-                        "vif": float(vif),
-                        "max_vif": float(max_vif),
-                        "is_problematic": bool(is_problematic),
-                    }
-                )
-
-            if smf is not None:
-                formula = (
-                    "target_z ~ active + TV_input_z + PR_input_z "
-                    "+ active:TV_input_z + active:PR_input_z"
-                )
-                model = smf.ols(formula=formula, data=df_sess).fit()
-                coef_map = model.params.drop(labels=["Intercept"], errors="ignore").to_dict()
-                r2_value = model.rsquared
-            else:
-                reg = LinearRegression().fit(X, y)
-                coef_map = dict(zip(X.columns, reg.coef_))
-                r2_value = reg.score(X, y)
-
-            channel_r2_records.append(
-                {
-                    "channel": channel_name,
-                    "outcome": outcome_name,
-                    "session_id": session_id,
-                    "r2": r2_value,
-                    "n_rows": len(df_sess),
-                }
-            )
-            for term, coef in coef_map.items():
-                channel_coef_records.append(
-                    {
-                        "channel": channel_name,
-                        "outcome": outcome_name,
-                        "session_id": session_id,
-                        "term": term,
-                        "coef": coef,
-                    }
-                )
-
-            fitted_sessions.append(session_id)
-
-        channel_session_counts.append(
-            {
-                "channel": channel_name,
-                "outcome": outcome_name,
-                "fitted_area_sessions": len(fitted_sessions),
-                "fitted_unique_sessions": len(set(fitted_sessions)),
-                "skipped_sessions": skipped_sessions,
-            }
-        )
-
-df_channel_coef_sessions = pd.DataFrame(channel_coef_records)
-df_channel_r2_sessions = pd.DataFrame(channel_r2_records)
-df_channel_vif_sessions = pd.DataFrame(channel_vif_records)
-df_channel_session_counts = pd.DataFrame(channel_session_counts)
-
-if not df_channel_coef_sessions.empty:
-    df_channel_coef = (
-        df_channel_coef_sessions.groupby(["channel", "outcome", "term"], as_index=False)
-        .agg(
-            coef_mean=("coef", "mean"),
-            coef_std=("coef", "std"),
-            n_sessions=("session_id", "nunique"),
-        )
-    )
-    df_channel_coef["coef_sem"] = df_channel_coef["coef_std"] / np.sqrt(
-        df_channel_coef["n_sessions"].clip(lower=1)
-    )
-else:
-    df_channel_coef = pd.DataFrame(
-        columns=["channel", "outcome", "term", "coef_mean", "coef_std", "coef_sem", "n_sessions"]
-    )
-
-if not df_channel_coef_sessions.empty:
-    df_channel_terms = (
-        df_channel_coef_sessions.pivot_table(
-            index=["channel", "outcome", "session_id"],
-            columns="term",
-            values="coef",
-            aggfunc="first",
-        )
-        .reset_index()
-    )
-    required_channel_terms = {
-        "active",
-        "TV_input_z",
-        "active:TV_input_z",
-        "PR_input_z",
-        "active:PR_input_z",
-    }
-    if required_channel_terms.issubset(set(df_channel_terms.columns)):
-        df_channel_terms["TV_input_active_full_z"] = (
-            df_channel_terms["TV_input_z"] + df_channel_terms["active:TV_input_z"]
-        )
-        df_channel_terms["PR_input_active_full_z"] = (
-            df_channel_terms["PR_input_z"] + df_channel_terms["active:PR_input_z"]
-        )
-        df_channel_coef_full_active_sessions = df_channel_terms[
-            [
-                "channel",
-                "outcome",
-                "session_id",
-                "active",
-                "TV_input_z",
-                "TV_input_active_full_z",
-                "PR_input_z",
-                "PR_input_active_full_z",
-            ]
-        ].melt(
-            id_vars=["channel", "outcome", "session_id"],
-            var_name="term",
-            value_name="coef",
-        )
-        df_channel_coef_full_active = (
-            df_channel_coef_full_active_sessions.groupby(["channel", "outcome", "term"], as_index=False)
-            .agg(
-                coef_mean=("coef", "mean"),
-                coef_std=("coef", "std"),
-                n_sessions=("session_id", "nunique"),
-            )
-        )
-        df_channel_coef_full_active["coef_sem"] = df_channel_coef_full_active["coef_std"] / np.sqrt(
-            df_channel_coef_full_active["n_sessions"].clip(lower=1)
-        )
-    else:
-        df_channel_coef_full_active_sessions = pd.DataFrame(
-            columns=["channel", "outcome", "session_id", "term", "coef"]
-        )
-        df_channel_coef_full_active = pd.DataFrame(
-            columns=["channel", "outcome", "term", "coef_mean", "coef_std", "coef_sem", "n_sessions"]
-        )
-else:
-    df_channel_coef_full_active_sessions = pd.DataFrame(
-        columns=["channel", "outcome", "session_id", "term", "coef"]
-    )
-    df_channel_coef_full_active = pd.DataFrame(
-        columns=["channel", "outcome", "term", "coef_mean", "coef_std", "coef_sem", "n_sessions"]
-    )
-
-if not df_channel_r2_sessions.empty:
-    df_channel_r2 = (
-        df_channel_r2_sessions.groupby(["channel", "outcome"], as_index=False)
-        .agg(
-            r2_mean=("r2", "mean"),
-            r2_std=("r2", "std"),
-            n_sessions=("session_id", "nunique"),
-        )
-    )
-    df_channel_r2["r2_sem"] = df_channel_r2["r2_std"] / np.sqrt(df_channel_r2["n_sessions"].clip(lower=1))
-else:
-    df_channel_r2 = pd.DataFrame(columns=["channel", "outcome", "r2_mean", "r2_std", "r2_sem", "n_sessions"])
-
-if not df_channel_vif_sessions.empty:
-    df_channel_problematic_sessions = (
-        df_channel_vif_sessions[df_channel_vif_sessions["is_problematic"]]
-        .groupby(["channel", "outcome", "session_id"], as_index=False)
-        .agg(
-            n_rows=("n_rows", "first"),
-            max_vif=("max_vif", "first"),
-        )
-    )
-else:
-    df_channel_problematic_sessions = pd.DataFrame(
-        columns=["channel", "outcome", "session_id", "n_rows", "max_vif"]
-    )
-
-for channel_name in channel_dfs.keys():
-    for outcome_name in channel_outcomes.keys():
-        df_fit = df_channel_r2_sessions[
-            (df_channel_r2_sessions["channel"] == channel_name)
-            & (df_channel_r2_sessions["outcome"] == outcome_name)
-        ].copy()
-        df_flag = df_channel_problematic_sessions[
-            (df_channel_problematic_sessions["channel"] == channel_name)
-            & (df_channel_problematic_sessions["outcome"] == outcome_name)
-        ].copy()
-
-        initial_unique_session_ids = sorted(df_fit["session_id"].unique().tolist())
-        flagged_unique_session_ids = sorted(df_flag["session_id"].unique().tolist())
-        remaining_unique_session_ids = sorted(set(initial_unique_session_ids) - set(flagged_unique_session_ids))
-
-        print(
-            f"[{channel_name} | {outcome_name}] Initial fitted sessions available: "
-            f"{len(df_fit)} area-session fits ({len(initial_unique_session_ids)} unique session IDs)."
-        )
-        print(
-            f"[{channel_name} | {outcome_name}] Unique session_id before VIF filtering "
-            f"({len(initial_unique_session_ids)}): {initial_unique_session_ids}"
-        )
-        if not df_flag.empty:
-            print(f"[{channel_name} | {outcome_name}] Flagged sessions (area-session fits):")
-            print(df_flag.sort_values("session_id").to_string(index=False, float_format=lambda x: f"{x:.3f}"))
-            print(
-                f"[{channel_name} | {outcome_name}] Flagged {len(df_flag)} area-session fits "
-                f"with max VIF >= {CHANNEL_VIF_FLAG_THRESHOLD} (or non-finite VIF)."
-            )
-            print(
-                f"[{channel_name} | {outcome_name}] Remaining sessions after flagging: "
-                f"{len(df_fit) - len(df_flag)} area-session fits."
-            )
-            print(
-                f"[{channel_name} | {outcome_name}] Unique session_id after VIF filtering "
-                f"({len(remaining_unique_session_ids)}): {remaining_unique_session_ids}"
-            )
-        else:
-            print(f"[{channel_name} | {outcome_name}] Flagged sessions (area-session fits): none")
-            print(
-                f"[{channel_name} | {outcome_name}] Remaining sessions after flagging: "
-                f"{len(df_fit)} area-session fits."
-            )
-            print(
-                f"[{channel_name} | {outcome_name}] Unique session_id after VIF filtering "
-                f"({len(initial_unique_session_ids)}): {initial_unique_session_ids}"
-            )
-
-if not df_channel_coef.empty:
-    channel_term_order = [
-        "active",
-        "TV_input_z",
-        "active:TV_input_z",
-        "PR_input_z",
-        "active:PR_input_z",
-    ]
-    channel_term_labels = {
-        "active": "active",
-        "TV_input_z": "input TV",
-        "active:TV_input_z": "input TV x active",
-        "PR_input_z": "input PR",
-        "active:PR_input_z": "input PR x active",
-    }
-    df_channel_coef_plot = df_channel_coef.copy()
-    df_channel_coef_plot["term"] = pd.Categorical(
-        df_channel_coef_plot["term"], categories=channel_term_order, ordered=True
-    )
-
-    for channel_name in channel_order:
-        for outcome_name in channel_outcomes.keys():
-            df_plot = df_channel_coef_plot[
-                (df_channel_coef_plot["channel"] == channel_name)
-                & (df_channel_coef_plot["outcome"] == outcome_name)
-            ].sort_values("term")
-            if df_plot.empty:
-                continue
-
-            fig, ax = plt.subplots(figsize=(5.4, 4.0))
-            y = np.arange(len(df_plot))
-            ax.errorbar(
-                df_plot["coef_mean"],
-                y,
-                xerr=df_plot["coef_sem"],
-                fmt="o",
-                color="C0",
-                capsize=3,
-            )
-            ax.axvline(0, color="black", linestyle="--", linewidth=1)
-            ax.set_yticks(y)
-            ax.set_yticklabels([channel_term_labels.get(t, t) for t in df_plot["term"]])
-            ax.set_xlabel(f"Coefficient (z-scored {outcome_name})")
-            ax.set_ylabel("Predictor")
-            ax.set_title(f"{channel_display_labels[channel_name]} - {outcome_name}")
-            ax.set_xlim(-1.1, 1.1)
-            ax.set_xticks([-1.0, -0.5, 0.0, 0.5, 1.0])
-            df_sess_ch = df_channel_coef_sessions[
-                (df_channel_coef_sessions["channel"] == channel_name)
-                & (df_channel_coef_sessions["outcome"] == outcome_name)
-            ]
-            plot_terms = df_plot["term"].tolist()
-            _annotate_forest_vs_zero(ax, df_sess_ch, plot_terms)
-            _print_coef_ttests(
-                df_sess_ch,
-                f"channel {channel_name} {outcome_name}",
-                plot_terms,
-            )
-            fig.tight_layout()
-
-            if SAVE_PLOTS:
-                fig.savefig(
-                    RESULTS_DIR / f"suppl_covstats_with_bhvr_channel_regression_coefficients_{channel_name}_{outcome_name}.pdf",
-                    format="pdf",
-                    bbox_inches="tight",
-                )
-            if SHOW_PLOTS:
-                plt.show()
-            else:
-                plt.close(fig)
-
-if not df_channel_coef_full_active.empty:
-    channel_term_order_full_active = [
-        "active",
-        "TV_input_z",
-        "TV_input_active_full_z",
-        "PR_input_z",
-        "PR_input_active_full_z",
-    ]
-    channel_term_labels_full_active = {
-        "active": "active",
-        "TV_input_z": "input TV (passive)",
-        "TV_input_active_full_z": "input TV (active full)",
-        "PR_input_z": "input PR (passive)",
-        "PR_input_active_full_z": "input PR (active full)",
-    }
-    df_channel_coef_full_active_plot = df_channel_coef_full_active.copy()
-    df_channel_coef_full_active_plot["term"] = pd.Categorical(
-        df_channel_coef_full_active_plot["term"],
-        categories=channel_term_order_full_active,
-        ordered=True,
-    )
-
-    for channel_name in channel_order:
-        for outcome_name in channel_outcomes.keys():
-            df_plot = df_channel_coef_full_active_plot[
-                (df_channel_coef_full_active_plot["channel"] == channel_name)
-                & (df_channel_coef_full_active_plot["outcome"] == outcome_name)
-            ].sort_values("term")
-            if df_plot.empty:
-                continue
-
-            fig, ax = plt.subplots(figsize=(5.8, 4.0))
-            y = np.arange(len(df_plot))
-            ax.errorbar(
-                df_plot["coef_mean"],
-                y,
-                xerr=df_plot["coef_sem"],
-                fmt="o",
-                color="C1",
-                capsize=3,
-            )
-            ax.axvline(0, color="black", linestyle="--", linewidth=1)
-            ax.set_yticks(y)
-            ax.set_yticklabels([channel_term_labels_full_active.get(t, t) for t in df_plot["term"]])
-            ax.set_xlabel(f"Coefficient (z-scored {outcome_name})")
-            ax.set_ylabel("Predictor")
-            ax.set_title(f"{channel_display_labels[channel_name]} - {outcome_name} (full active slopes)")
-            ax.set_xlim(-1.1, 1.1)
-            ax.set_xticks([-1.0, -0.5, 0.0, 0.5, 1.0])
-            df_sess_ch = df_channel_coef_full_active_sessions[
-                (df_channel_coef_full_active_sessions["channel"] == channel_name)
-                & (df_channel_coef_full_active_sessions["outcome"] == outcome_name)
-            ]
-            plot_terms = df_plot["term"].tolist()
-            _annotate_forest_vs_zero(ax, df_sess_ch, plot_terms)
-            _print_coef_ttests(
-                df_sess_ch,
-                f"channel full-active {channel_name} {outcome_name}",
-                plot_terms,
-            )
-            fig.tight_layout()
-
-            if SAVE_PLOTS:
-                fig.savefig(
-                    RESULTS_DIR
-                    / f"suppl_covstats_with_bhvr_channel_regression_coefficients_full_active_{channel_name}_{outcome_name}.pdf",
-                    format="pdf",
-                    bbox_inches="tight",
-                )
-            if SHOW_PLOTS:
-                plt.show()
-            else:
-                plt.close(fig)
-
-if not df_channel_r2_sessions.empty:
-    df_channel_r2_plot = df_channel_r2_sessions.copy()
-    df_channel_r2_plot["channel"] = pd.Categorical(
-        df_channel_r2_plot["channel"], categories=channel_order, ordered=True
-    )
-    df_channel_r2_plot["channel_label"] = df_channel_r2_plot["channel"].map(channel_display_labels)
-
-    g_channel_r2 = sns.catplot(
-        data=df_channel_r2_plot,
-        x="channel_label",
-        y="r2",
-        col="outcome",
-        kind="box",
-        order=[channel_display_labels[ch] for ch in channel_order],
-        sharey=True,
-        height=4.0,
-        aspect=1.2,
-    )
-    g_channel_r2.set_axis_labels("Channel", "R^2")
-    g_channel_r2.fig.suptitle("Channel model R^2 distribution by outcome", y=1.03)
-    for ax in g_channel_r2.axes.flat:
-        ax.set_ylim(0, 1.0)
-        ax.tick_params(axis="x", rotation=20)
-
-    if SAVE_PLOTS:
-        g_channel_r2.figure.savefig(
-            RESULTS_DIR / "suppl_covstats_with_bhvr_channel_regression_r2_by_channel.pdf",
-            format="pdf",
-            bbox_inches="tight",
-        )
-    if SHOW_PLOTS:
-        plt.show()
-    else:
-        plt.close(g_channel_r2.figure)
-
-if SAVE_PLOTS and not df_channel_coef.empty:
-    df_channel_coef.to_csv(RESULTS_DIR / "suppl_covstats_with_bhvr_channel_regression_coefficients.csv", index=False)
-if SAVE_PLOTS and not df_channel_coef_full_active.empty:
-    df_channel_coef_full_active.to_csv(
-        RESULTS_DIR / "suppl_covstats_with_bhvr_channel_regression_coefficients_full_active.csv", index=False
-    )
-if SAVE_PLOTS and not df_channel_r2.empty:
-    df_channel_r2.to_csv(RESULTS_DIR / "suppl_covstats_with_bhvr_channel_regression_r2.csv", index=False)
-if SAVE_PLOTS and not df_channel_vif_sessions.empty:
-    df_channel_vif_sessions.to_csv(
-        RESULTS_DIR / "suppl_covstats_with_bhvr_channel_regression_vif_by_session.csv", index=False
-    )
-if SAVE_PLOTS and not df_channel_problematic_sessions.empty:
-    df_channel_problematic_sessions.to_csv(
-        RESULTS_DIR / "suppl_covstats_with_bhvr_channel_regression_problematic_sessions.csv", index=False
-    )
 # %%

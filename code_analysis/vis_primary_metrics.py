@@ -1,10 +1,11 @@
-# Needs dataframes visp_cloud_shape.pk and df_stats_area.pk in clean_scripts/data
+# Needs dataframes visp_cloud_shape.pk and df_stats_area.pk in data/
 # %%
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
+import sys
 from pathlib import Path
 from scipy import stats
 # %%
@@ -156,8 +157,13 @@ try:
 except NameError:
     _SCRIPT_DIR = Path.cwd()
 
-DATA_DIR = _SCRIPT_DIR.parent / 'data'
-RESULTS_DIR = _SCRIPT_DIR.parent / 'results'
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
+
+DATA_DIR = config.DATA_DIR
+RESULTS_DIR = config.results_dir("vis_primary_metrics")
 # %%
 # ---------------------------------------------------------------
 # LOAD DATA AND CREATE DATAFRAMES: ONLY VISp AREA FOR SUMMARY PLOT IN FIGURE 1

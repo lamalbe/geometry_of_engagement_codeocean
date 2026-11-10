@@ -27,18 +27,29 @@ Within each area, for every (session_id, active, image_name) group:
 
 Areas with fewer than 30 units are skipped.
 
-Outputs (clean_scripts/data):
+Outputs (data/):
   - df_poisson_stats.pk: one row per (area, session_id, active, image_name)
   - df_poisson_stats_subsampled.pk: one row per (..., subsample_id)
 """
 
 import multiprocessing
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-ALLEN_DATA_DIR = Path('/data/allen_engagement_data')
+try:
+    _SCRIPT_DIR = Path(__file__).resolve().parent
+except NameError:
+    _SCRIPT_DIR = Path.cwd()
+
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
+
+ALLEN_DATA_DIR = config.ALLEN_PREPROCESSED_DIR
 
 BINSIZE = 0.05
 MIN_UNITS_PER_AREA = 30
@@ -226,7 +237,7 @@ def process_session_general(session_id, session_number, experience_level, image_
 # image_set: G or H; both are kept for day-1 Familiar sessions.
 
 if __name__ == "__main__":
-    data_dir = Path(__file__).resolve().parent.parent / 'data'
+    data_dir = config.DATA_DIR
     data_dir.mkdir(parents=True, exist_ok=True)
 
     df_sessions = pd.read_pickle(ALLEN_DATA_DIR / 'df_sessions.pk')

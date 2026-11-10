@@ -7,22 +7,27 @@ One histogram per recording day:
   Novel    = session_number 2 (day2)
 
 SCm is the sum of SCiw and SCig (no Allen acronym SCm in the unit table).
-Figures go to clean_scripts/results.
+Figures go to results/unit_counts_by_area/.
 """
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
-
-ALLEN_DATA_DIR = Path("/data/allen_engagement_data")
-DAY_SUBDIRS = {1: "day1", 2: "day2"}
 
 try:
     _SCRIPT_DIR = Path(__file__).resolve().parent
 except NameError:
     _SCRIPT_DIR = Path.cwd()
 
-RESULTS_DIR = _SCRIPT_DIR.parent / "results"
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
+
+ALLEN_DATA_DIR = config.ALLEN_PREPROCESSED_DIR
+DAY_SUBDIRS = {1: "day1", 2: "day2"}
+RESULTS_DIR = config.results_dir("unit_counts_by_area")
 SAVE_PLOTS = True
 
 SCALE_UNITS = 5000

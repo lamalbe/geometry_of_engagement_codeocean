@@ -1,4 +1,5 @@
 # %%
+import sys
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
@@ -14,16 +15,21 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 — registers 3d projectio
 SAVE_PLOT = True
 # True: only SESSION_IDS. False: every session that survives the image/area filters.
 USE_MANUAL_SESSIONS = True
-# SESSION_IDS = ["1093638203"] # Use this for 6 panel plot
-SESSION_IDS = ["1095138995"] # Use this for pooled SVD trial clouds
+# SESSION_IDS = ["1093638203"] # Clean example for 6 panel plot
+SESSION_IDS = ["1095138995"] # Clean example for pooled SVD trial clouds
 
 try:
     _SCRIPT_DIR = Path(__file__).resolve().parent
 except NameError:
     _SCRIPT_DIR = Path.cwd()
 
-DATA_DIR = _SCRIPT_DIR.parent / "data"
-RESULTS_DIR = _SCRIPT_DIR.parent / "results"
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
+
+DATA_DIR = config.DATA_DIR
+RESULTS_DIR = config.results_dir("cross_area_VIS2MID_channel")
 
 IMAGE_NAME = "im078_r"
 TIME_FROM_STIMULUS_MIN = 0.1

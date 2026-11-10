@@ -5,6 +5,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
+import sys
 from pathlib import Path
 from scipy import stats
 # %%
@@ -26,8 +27,13 @@ try:
 except NameError:
     _SCRIPT_DIR = Path.cwd()
 
-DATA_DIR = _SCRIPT_DIR.parent / 'data'
-RESULTS_DIR = _SCRIPT_DIR.parent / 'results'
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
+
+DATA_DIR = config.DATA_DIR
+RESULTS_DIR = config.results_dir("vis_circuit_metrics")
 
 stats_file = DATA_DIR / 'df_stats_area.pk'
 df_stats_all = pd.read_pickle(stats_file)
@@ -164,6 +170,24 @@ def _style_filled_boxes(bp, box_colors):
         flier.set_marker("o")
 
 
+def _style_empty_boxes(bp, box_colors):
+    """Unfilled boxes with colored edges (stripplot overlay style)."""
+    for i, (patch, color) in enumerate(zip(bp["boxes"], box_colors)):
+        patch.set_facecolor("none")
+        patch.set_edgecolor(color)
+        patch.set_linewidth(1.5)
+        bp["whiskers"][i * 2].set_color(color)
+        bp["whiskers"][i * 2 + 1].set_color(color)
+        bp["whiskers"][i * 2].set_linewidth(1.5)
+        bp["whiskers"][i * 2 + 1].set_linewidth(1.5)
+        bp["caps"][i * 2].set_color(color)
+        bp["caps"][i * 2 + 1].set_color(color)
+        bp["caps"][i * 2].set_linewidth(1.5)
+        bp["caps"][i * 2 + 1].set_linewidth(1.5)
+        bp["medians"][i].set_color(color)
+        bp["medians"][i].set_linewidth(1.5)
+
+
 def _ratio_ylim(vals, pad_frac=0.1):
     vals = pd.Series(vals).dropna()
     if vals.empty:
@@ -203,10 +227,10 @@ def _box_ylim_values(box_data, cut_outliers=False):
 # ACTIVE/PASSIVE RATIO BY AREA (LGd, VISpl, VISm, SCMRN)
 # -------------------------------------------------------------------------------------------------
 # When True, all ratio boxplots in this section share a common y-axis.
-SHARE_Y_AXIS = False
+SHARE_Y_AXIS = True
 # When True, omit Tukey outliers from the plots and set y-limits from inliers.
 # Shared y-limits (SHARE_Y_AXIS) are then computed from those inliers.
-CUT_OUTLIERS = False
+CUT_OUTLIERS = True
 
 box_area_order = ['LGd', 'VISpl', 'VISm', 'SCMRN']
 metrics_ratio = ['rbar', 'TR_emp', 'PR_emp', 'a_sparsity']
@@ -324,28 +348,37 @@ if not df_ratio_areas.empty:
 
 # %%
 # -------------------------------------------------------------------------------------------------
-# ACTIVE/PASSIVE RATIO BY VISUAL CORTEX AREA
+# ACTIVE/PASSIVE RATIO BY AREA — EMPTY BOX + STRIPPLOT (LGd, VISpl, VISm, SCMRN)
 # -------------------------------------------------------------------------------------------------
+# Same ratios as the previous section; empty box outlines with overlapping points.
+SHARE_Y_AXIS_STRIP = False
+CUT_OUTLIERS_STRIP = False
 
-visual_cortex_areas = ['VISp', 'VISpm', 'VISam', 'VISrl', 'VISl', 'VISal']
-metrics_ratio_vis = ['rbar', 'TR_emp', 'PR_emp']
-ratio_keys_vis = ['session_id', 'image_name', 'area']
-avg_group_cols_vis = ['session_id', 'image_name', 'active', 'area']
+box_area_order_strip = ['LGd', 'VISpl', 'VISm', 'SCMRN']
+metrics_ratio_strip = ['rbar', 'TR_emp', 'PR_emp', 'a_sparsity']
+ratio_keys_strip = ['session_id', 'image_name', 'area']
+avg_group_cols_strip = ['session_id', 'image_name', 'active', 'area']
+circuit_box_colors_strip = {
+    'LGd': '#D679AD',
+    'VISpl': '#53BBF7',
+    'VISm': '#0079BC',
+    'SCMRN': '#F0A600',
+}
 
-df_ratio_vis_areas = df_stats.copy()
-df_ratio_vis_areas = df_ratio_vis_areas[
-    (df_ratio_vis_areas['area'].isin(visual_cortex_areas))
-    & (df_ratio_vis_areas['N'] >= 30)
-    & (df_ratio_vis_areas['image_name'] != 'omitted')
+df_ratio_areas_strip = df_stats.copy()
+df_ratio_areas_strip = df_ratio_areas_strip[
+    (df_ratio_areas_strip['area'].isin(box_area_order_strip))
+    & (df_ratio_areas_strip['N'] >= 30)
+    & (df_ratio_areas_strip['image_name'] != 'omitted')
 ]
 
-if not df_ratio_vis_areas.empty:
-    numeric_cols = df_ratio_vis_areas.select_dtypes(include=np.number).columns.tolist()
-    avg_cols = [col for col in numeric_cols if col not in avg_group_cols_vis + ['subsample_id']]
+if not df_ratio_areas_strip.empty:
+    numeric_cols = df_ratio_areas_strip.select_dtypes(include=np.number).columns.tolist()
+    avg_cols = [col for col in numeric_cols if col not in avg_group_cols_strip + ['subsample_id']]
 
-    df_ratio_vis_avg = (
-        df_ratio_vis_areas[avg_group_cols_vis + avg_cols]
-        .groupby(avg_group_cols_vis, as_index=False)[avg_cols]
+    df_ratio_avg_strip = (
+        df_ratio_areas_strip[avg_group_cols_strip + avg_cols]
+        .groupby(avg_group_cols_strip, as_index=False)[avg_cols]
         .mean()
     )
 
@@ -353,390 +386,117 @@ if not df_ratio_vis_areas.empty:
     if SAVE_PLOTS:
         output_dir.mkdir(parents=True, exist_ok=True)
 
-    for metric in metrics_ratio_vis:
-        df_pivot = df_ratio_vis_avg.pivot_table(
-            index=ratio_keys_vis,
+    ratio_plot_cases_strip = []
+    for metric in metrics_ratio_strip:
+        df_pivot = df_ratio_avg_strip.pivot_table(
+            index=ratio_keys_strip,
             columns='active',
             values=metric,
             aggfunc='mean',
         ).reset_index()
         df_pivot['ratio'] = df_pivot[True] / df_pivot[False]
-        df_plot_ratio = df_pivot[ratio_keys_vis + ['ratio']].copy()
+        df_plot_ratio = df_pivot[ratio_keys_strip + ['ratio']].copy()
+        df_plot_ratio = df_plot_ratio[
+            df_plot_ratio['ratio'].notna() & np.isfinite(df_plot_ratio['ratio'])
+        ]
         df_plot_ratio['area'] = pd.Categorical(
             df_plot_ratio['area'],
-            categories=visual_cortex_areas,
+            categories=box_area_order_strip,
             ordered=True,
         )
 
-        g_ratio = sns.catplot(
-            data=df_plot_ratio,
+        box_data, box_colors, tick_labels = [], [], []
+        for area in box_area_order_strip:
+            vals = df_plot_ratio.loc[df_plot_ratio['area'] == area, 'ratio'].dropna().to_numpy()
+            if len(vals) == 0:
+                continue
+            box_data.append(vals)
+            box_colors.append(circuit_box_colors_strip[area])
+            tick_labels.append(area)
+        if not box_data:
+            continue
+        ratio_plot_cases_strip.append((metric, df_plot_ratio, box_data, box_colors, tick_labels))
+
+    shared_ylim_strip = None
+    if SHARE_Y_AXIS_STRIP and ratio_plot_cases_strip:
+        shared_ylim_strip = _ratio_ylim(
+            np.concatenate([
+                _box_ylim_values(case[2], CUT_OUTLIERS_STRIP) for case in ratio_plot_cases_strip
+            ])
+        )
+
+    for metric, df_plot_ratio, box_data, box_colors, tick_labels in ratio_plot_cases_strip:
+        ylim_vals = _box_ylim_values(box_data, CUT_OUTLIERS_STRIP)
+        y_lim = shared_ylim_strip if shared_ylim_strip is not None else _ratio_ylim(ylim_vals)
+        df_strip = df_plot_ratio[df_plot_ratio['area'].isin(tick_labels)].copy()
+        if CUT_OUTLIERS_STRIP:
+            filtered = []
+            for area, vals in zip(tick_labels, box_data):
+                inliers = _tukey_inliers(vals)
+                if inliers.size == 0:
+                    continue
+                lo, hi = float(inliers.min()), float(inliers.max())
+                sub = df_strip[df_strip['area'] == area]
+                filtered.append(sub[sub['ratio'].between(lo, hi)])
+            df_strip = pd.concat(filtered, ignore_index=True) if filtered else df_strip.iloc[0:0]
+
+        fig, ax = plt.subplots(figsize=(8, 5))
+        bp = ax.boxplot(
+            box_data,
+            positions=range(len(box_data)),
+            widths=0.6,
+            patch_artist=True,
+            showfliers=False,
+            zorder=2,
+        )
+        _style_empty_boxes(bp, box_colors)
+        n_collections_before = len(ax.collections)
+        sns.stripplot(
+            data=df_strip,
             x='area',
             y='ratio',
-            kind='box',
-            order=visual_cortex_areas,
-            height=4,
-            aspect=1.4,
+            hue='area',
+            order=tick_labels,
+            hue_order=tick_labels,
+            palette=dict(zip(tick_labels, box_colors)),
+            ax=ax,
+            jitter=0.2,
+            size=5,
+            alpha=0.4,
+            edgecolor='black',
+            linewidth=0.4,
+            legend=False,
+            zorder=3,
         )
-        g_ratio.set_ylabels(f'Active / Passive Ratio ({metric})')
-        g_ratio.set_xlabels('Area')
-        g_ratio.figure.suptitle(
-            f'Active vs Passive Ratio: {metric} (visual cortex, averaged over subsamples)',
+        for collection in ax.collections[n_collections_before:]:
+            collection.set_rasterized(True)
+        ax.set_xticks(range(len(box_data)))
+        ax.set_xticklabels(tick_labels, rotation=45, ha='right')
+        ax.set_xlabel('Area')
+        ax.set_ylabel(f'Active / Passive Ratio ({metric})')
+        ax.set_ylim(y_lim)
+        ax.set_xlim(-0.5, len(box_data) - 0.5)
+        ax.grid(axis='y', linestyle='--', alpha=0.2)
+        ax.axhline(1, color='black', linestyle='--', linewidth=0.8, alpha=0.5, zorder=0)
+        _annotate_one_sample_vs_mu(
+            ax, df_plot_ratio, 'ratio', tick_labels, mu=1.0, category_col='area',
+            y_offset=_y_offset_for_annotations(pd.Series(ylim_vals)),
+        )
+        _pad_ylim_for_asterisks(ax)
+        fig.suptitle(
+            f'Active vs Passive Ratio: {metric} (empty box + stripplot, averaged over subsamples)',
             y=1.02,
         )
-        for ax in g_ratio.axes.flat:
-            ax.axhline(1, color='black', linestyle='--', linewidth=0.8, zorder=0)
-            _annotate_one_sample_vs_mu(
-                ax, df_plot_ratio, 'ratio', visual_cortex_areas, mu=1.0, category_col='area',
-            )
-            _pad_ylim_for_asterisks(ax)
-
-        if SAVE_PLOTS:
-            g_ratio.figure.savefig(
-                output_dir / f"ratio_box_visual_cortex_{metric}.pdf",
-                format="pdf",
-                bbox_inches="tight",
-            )
-            plt.close(g_ratio.figure)
-        else:
-            plt.show()
-
-# %%
-# -------------------------------------------------------------------------------------------------
-# VISUAL CORTEX ACTIVE/PASSIVE SPAGHETTI PLOTS WITH SUBSAMPLE AVERAGING
-# -------------------------------------------------------------------------------------------------
-
-df_visual_spaghetti = df_stats.copy()
-df_visual_spaghetti = df_visual_spaghetti[df_visual_spaghetti['area'].isin(visual_cortex_areas)].copy()
-df_visual_spaghetti = df_visual_spaghetti[df_visual_spaghetti['image_name'] != 'omitted']
-
-if not df_visual_spaghetti.empty:
-    df_visual_spaghetti['PR_emp_norm'] = df_visual_spaghetti['PR_emp'] / df_visual_spaghetti['N']
-
-    group_cols = ['session_id', 'active', 'area']
-    numeric_cols = df_visual_spaghetti.select_dtypes(include=np.number).columns.tolist()
-    avg_cols = [col for col in numeric_cols if col not in group_cols + ['subsample_id']]
-
-    df_visual_spaghetti_avg = (
-        df_visual_spaghetti[group_cols + avg_cols]
-        .groupby(group_cols, as_index=False)[avg_cols]
-        .mean()
-    )
-
-    df_visual_spaghetti_avg['area'] = pd.Categorical(
-        df_visual_spaghetti_avg['area'],
-        categories=visual_cortex_areas,
-        ordered=True
-    )
-
-    metric_configs = [
-        ('PR_emp_norm', 'Normalized Participation Ratio'),
-        ('rbar', 'Population Mean Activity')
-    ]
-
-    rng = np.random.default_rng(seed=0)
-    palette = {False: '#1f77b4', True: '#ff7f0e'}
-
-    for metric, y_label in metric_configs:
-        if metric not in df_visual_spaghetti_avg.columns:
-            continue
-
-        df_metric = df_visual_spaghetti_avg[df_visual_spaghetti_avg[metric].notna()].copy()
-        if df_metric.empty:
-            continue
-
-        areas_present = [area for area in visual_cortex_areas if area in df_metric['area'].unique()]
-        if not areas_present:
-            continue
-
-        n_cols = 3
-        n_rows = math.ceil(len(areas_present) / n_cols)
-        fig, axes = plt.subplots(
-            n_rows,
-            n_cols,
-            figsize=(n_cols * 4, n_rows * 4),
-            sharey=False,
-            squeeze=False
-        )
-
-        for idx, area in enumerate(areas_present):
-            ax = axes[idx // n_cols, idx % n_cols]
-            area_data = df_metric[df_metric['area'] == area]
-
-            # Draw connecting lines between passive and active for each session
-            pivot = (
-                area_data.pivot_table(
-                    index='session_id',
-                    columns='active',
-                    values=metric,
-                    aggfunc='mean'
-                )
-            )
-            if True in pivot.columns and False in pivot.columns:
-                pivot = pivot.dropna(subset=[True, False])
-                for _, row in pivot.iterrows():
-                    ax.plot(
-                        [0, 1],
-                        [row[True], row[False]],
-                        color='black',
-                        linewidth=1,
-                        alpha=0.6,
-                        zorder=2
-                    )
-
-            # Scatter points for each active state (active first)
-            for x_pos, active_val in enumerate([True, False]):
-                subset = area_data[area_data['active'] == active_val]
-                if subset.empty:
-                    continue
-
-                jitter = rng.uniform(-0.08, 0.08, len(subset))
-                ax.scatter(
-                    np.full(len(subset), x_pos) + jitter,
-                    subset[metric],
-                    s=70,
-                    facecolors='white',
-                    edgecolors=palette[active_val],
-                    linewidths=1.5,
-                    alpha=0.95,
-                    zorder=3
-                )
-
-            ax.set_xticks([0, 1])
-            ax.set_xticklabels(['Active', 'Passive'])
-            ax.set_xlim(-0.4, 1.4)
-            ax.set_title(area)
-            ax.grid(axis='y', linestyle='--', alpha=0.3)
-            if idx % n_cols == 0:
-                ax.set_ylabel(y_label)
-            else:
-                ax.set_ylabel('')
-
-        # Hide unused axes
-        total_axes = n_rows * n_cols
-        for idx in range(len(areas_present), total_axes):
-            axes[idx // n_cols, idx % n_cols].axis('off')
-
-        fig.suptitle(f'Active vs Passive {y_label} (Session Trajectories)', y=0.98)
         fig.tight_layout()
 
         if SAVE_PLOTS:
-            output_dir = RESULTS_DIR
-            output_dir.mkdir(parents=True, exist_ok=True)
             fig.savefig(
-                output_dir / f"{metric}_spaghetti_visual_cortex.pdf",
-                format="pdf",
-                bbox_inches="tight"
+                output_dir / f"ratio_box_strip_{'-'.join(box_area_order_strip)}_{metric}.pdf",
+                format='pdf',
+                bbox_inches='tight',
+                dpi=300,
             )
             plt.close(fig)
-        else:
-            plt.show()
-
-# %%
-# ------------------------------
-# INTER-AREA - PLOTS PER SESSION
-# ------------------------------
-
-# Define palette for each area combination
-inter_area_combinations = [
-    ['LGd', 'VISpl'],
-    ['VISpl', 'VISm'],
-    ['VISm', 'SCMRN']
-]
-
-# Map each combination to its specific palette
-palette_map = {
-    tuple(['LGd', 'VISpl']): {True: '#2A7FFF', False: '#AA0000'},
-    tuple(['VISpl', 'VISm']): {True: '#2A7FFF', False: '#AA0000'},
-    tuple(['VISm', 'SCMRN']): {True: '#2A7FFF', False: '#AA0000'}
-}
-
-for inter_area in inter_area_combinations:
-    # Get the palette for this specific combination
-    palette_inter = palette_map[tuple(inter_area)]
-    df_plot = df_stats.copy()
-    df_plot = df_plot[df_plot.area.isin(inter_area)]
-    df_plot = df_plot[df_plot.N >= 30]
-    df_plot = df_plot[df_plot.image_name != 'omitted']
-    df_plot['PR_emp'] = df_plot['PR_emp'] / df_plot['N']
-    df_plot['TV_emp'] = df_plot['TV_emp'] / df_plot['N']
-
-    valid_sessions = (df_plot.groupby('session_id')['area'].apply(lambda x: set(inter_area).issubset(set(x))))
-    df_plot = df_plot[df_plot.session_id.isin(valid_sessions[valid_sessions].index)]
-
-    keys = ['session_id', 'active', 'image_name', 'subsample_id']
-    metrics = ['mii', 'mij', 'sii', 'sij', 'TV_emp', 'PR_emp', 'rbar']
-
-    # Pivot directly: one column per (metric, area)
-    df_pivot = df_plot.pivot(index=keys, columns='area', values=metrics)
-
-    # Flatten multi-index column names (metric, area) → "metric_area"
-    df_pivot.columns = [f"{metric}_{area}" for metric, area in df_pivot.columns]
-    df_pivot = df_pivot.reset_index()
-
-    # Metric pairs to plot - leave space for future additions
-    metric_pairs = [
-        ('TV_emp', 'mii'),
-        # ('TV_emp', 'PR_emp'),
-        ('PR_emp', 'PR_emp'),
-        ('rbar', 'rbar'),
-        # Add more metric pairs here in the future
-    ]
-
-    # loop over sessions
-    for session in df_pivot['session_id'].unique():
-        df_sess = df_pivot[df_pivot['session_id'] == session]
-        
-        # Create figure with subplots - one column per metric pair
-        n_cols = len(metric_pairs)
-        fig, axes = plt.subplots(1, n_cols, figsize=(n_cols * 4, 4), sharey=False)
-        
-        # Handle single subplot case (when n_cols == 1)
-        if n_cols == 1:
-            axes = [axes]
-        
-        # loop over metric pairs and plot in columns
-        for col_idx, (metric_base_x, metric_base_y) in enumerate(metric_pairs):
-            ax = axes[col_idx]
-            metric_x = f'{metric_base_x}_{inter_area[0]}'
-            metric_y = f'{metric_base_y}_{inter_area[1]}'
-            
-            # Skip if metrics missing in this session
-            if metric_x not in df_sess.columns or metric_y not in df_sess.columns:
-                ax.axis('off')
-                continue
-            
-            df_xy = df_sess[[metric_x, metric_y, 'active']].dropna()
-            if df_xy.empty:
-                ax.axis('off')
-                continue
-            
-            # Plot using seaborn regplot on the specific axis
-            for active_val in [False, True]:
-                df_xy_subset = df_xy[df_xy['active'] == active_val]
-                if df_xy_subset.empty:
-                    continue
-                
-                sns.regplot(
-                    data=df_xy_subset,
-                    x=metric_x,
-                    y=metric_y,
-                    scatter=True,
-                    ax=ax,
-                    color=palette_inter[active_val],
-                    label=f"{'Active' if active_val else 'Passive'}",
-                    scatter_kws={"alpha": 1, "s": 25, "edgecolor": "black", "linewidths": 0.5}
-                )
-            
-            # Rasterize scatter points
-            for collection in ax.collections:
-                if hasattr(collection, 'set_rasterized'):
-                    collection.set_rasterized(True)
-            
-            ax.set_xlabel(metric_x)
-            ax.set_ylabel(metric_y)
-            ax.set_title(f"{metric_base_x} vs {metric_base_y}")
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-        
-        fig.suptitle(f"Session: {session} | {inter_area[0]} vs {inter_area[1]}", y=1.02)
-        plt.tight_layout()
-        
-        if SAVE_PLOTS:
-            output_dir = RESULTS_DIR
-            output_dir.mkdir(parents=True, exist_ok=True)
-            area_label = "_".join(inter_area)
-            out_name = f"{session}__{area_label}_inter_area.pdf".replace('/', '-')
-            fig.savefig(output_dir / out_name, format="pdf", bbox_inches="tight", dpi=300)
-            plt.close(fig)
-        else:
-            plt.show()
-
-# %%
-# ------------------------------
-# INTRA-AREA - PLOTS PER SESSION
-# ------------------------------
-
-# choose areas to show as columns
-areas = ['LGd', 'VISp', 'SCMRN']
-
-palette_inter = {False: '#ff7f0e', True: '#1f77b4'}
-
-# Metric pairs to plot - leave space for future additions
-metric_pairs = [
-    ('TV_emp', 'rbar'),
-    # Add more metric pairs here in the future
-]
-
-# Normalize TV_emp once for all metric pairs that might need it
-df_plot = df_stats.copy()
-df_plot['TV_emp'] = df_plot['TV_emp'] / df_plot['N']
-
-# loop over metric pairs
-for metric_x, metric_y in metric_pairs:
-    # loop over all sessions
-    for sess in df_stats["session_id"].unique():
-        df_sess = df_plot[(df_plot["session_id"] == sess) & (df_plot["area"].isin(areas)) & (df_plot["N"]>30)]
-        if df_sess.empty:
-            continue
-
-        g = sns.lmplot(
-            data=df_sess,
-            x=metric_x,
-            y=metric_y,
-            hue="active",
-            palette=palette_inter,
-            col="area",
-            col_order=areas,
-            scatter_kws={"alpha": 1, "s": 25, "edgecolor": "black", "linewidths": 0.5},
-            line_kws={"linewidth": 2},
-            height=3,
-            aspect=1,
-            facet_kws={'sharex': False, 'sharey': False}
-        )
-
-        g.figure.suptitle(f"Session {sess}: {metric_y} vs {metric_x}", y=1.05)
-        
-        # Rasterize scatter points in all facets
-        for ax in g.axes.flat:
-            for collection in ax.collections:
-                if hasattr(collection, 'set_rasterized'):
-                    collection.set_rasterized(True)
-        
-        # annotate each facet - show only slope at bottom right, slightly above x-axis
-        for j, area in enumerate(g.col_names):  # columns = areas present
-            ax = g.axes[0, j]
-            # Get unique active values present in the data for this area
-            active_vals = sorted(df_sess[df_sess["area"] == area]["active"].unique(), reverse=True)
-            
-            slopes_text = []
-            for i, active_val in enumerate(active_vals):
-                sub = df_sess[(df_sess["area"] == area) & (df_sess["active"] == active_val)]
-                if len(sub) < 2:
-                    continue
-
-                lr = stats.linregress(sub[metric_x].values, sub[metric_y].values)
-                slope = lr.slope
-                slopes_text.append(f"m={slope:.3f}")
-
-                print(f"Session {sess} | {area} | active={active_val} | "
-                    f"slope={slope:.6f}")
-            
-            # Position at bottom right, slightly above x-axis - show all slopes stacked
-            if slopes_text:
-                combined_text = "\n".join(slopes_text)
-                ax.text(
-                    0.98, 0.05,
-                    combined_text,
-                    transform=ax.transAxes, ha="right", va="bottom", fontsize=9,
-                    bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="0.6", lw=0.8, alpha=0.9)
-                )
-        
-        if SAVE_PLOTS:
-            output_dir = RESULTS_DIR
-            output_dir.mkdir(parents=True, exist_ok=True)
-            out_name = f"intra_{sess}_{metric_y}_vs_{metric_x}.pdf".replace('/', '-')
-            g.figure.savefig(output_dir / out_name, format="pdf", bbox_inches="tight", dpi=300)
-            plt.close(g.figure)
         else:
             plt.show()
 
@@ -1039,6 +799,123 @@ if ratio_data_vis:
         title_by='image',
         file_stem='ratio_box_visual_cortex_by_image',
     )
-
-
 # %%
+# %%
+# ------------------------------
+# INTER-AREA - PLOTS PER SESSION
+# ------------------------------
+
+# Define palette for each area combination
+inter_area_combinations = [
+    ['LGd', 'VISpl'],
+    ['VISpl', 'VISm'],
+    ['VISm', 'SCMRN']
+]
+
+# Map each combination to its specific palette
+palette_map = {
+    tuple(['LGd', 'VISpl']): {True: '#2A7FFF', False: '#AA0000'},
+    tuple(['VISpl', 'VISm']): {True: '#2A7FFF', False: '#AA0000'},
+    tuple(['VISm', 'SCMRN']): {True: '#2A7FFF', False: '#AA0000'}
+}
+
+for inter_area in inter_area_combinations:
+    # Get the palette for this specific combination
+    palette_inter = palette_map[tuple(inter_area)]
+    df_plot = df_stats.copy()
+    df_plot = df_plot[df_plot.area.isin(inter_area)]
+    df_plot = df_plot[df_plot.N >= 30]
+    df_plot = df_plot[df_plot.image_name != 'omitted']
+    df_plot['PR_emp'] = df_plot['PR_emp'] / df_plot['N']
+    df_plot['TV_emp'] = df_plot['TV_emp'] / df_plot['N']
+
+    valid_sessions = (df_plot.groupby('session_id')['area'].apply(lambda x: set(inter_area).issubset(set(x))))
+    df_plot = df_plot[df_plot.session_id.isin(valid_sessions[valid_sessions].index)]
+
+    keys = ['session_id', 'active', 'image_name', 'subsample_id']
+    metrics = ['mii', 'mij', 'sii', 'sij', 'TV_emp', 'PR_emp', 'rbar']
+
+    # Pivot directly: one column per (metric, area)
+    df_pivot = df_plot.pivot(index=keys, columns='area', values=metrics)
+
+    # Flatten multi-index column names (metric, area) → "metric_area"
+    df_pivot.columns = [f"{metric}_{area}" for metric, area in df_pivot.columns]
+    df_pivot = df_pivot.reset_index()
+
+    # Metric pairs to plot - leave space for future additions
+    metric_pairs = [
+        ('TV_emp', 'mii'),
+        # ('TV_emp', 'PR_emp'),
+        ('PR_emp', 'PR_emp'),
+        ('rbar', 'rbar'),
+        # Add more metric pairs here in the future
+    ]
+
+    # loop over sessions
+    for session in df_pivot['session_id'].unique():
+        df_sess = df_pivot[df_pivot['session_id'] == session]
+        
+        # Create figure with subplots - one column per metric pair
+        n_cols = len(metric_pairs)
+        fig, axes = plt.subplots(1, n_cols, figsize=(n_cols * 4, 4), sharey=False)
+        
+        # Handle single subplot case (when n_cols == 1)
+        if n_cols == 1:
+            axes = [axes]
+        
+        # loop over metric pairs and plot in columns
+        for col_idx, (metric_base_x, metric_base_y) in enumerate(metric_pairs):
+            ax = axes[col_idx]
+            metric_x = f'{metric_base_x}_{inter_area[0]}'
+            metric_y = f'{metric_base_y}_{inter_area[1]}'
+            
+            # Skip if metrics missing in this session
+            if metric_x not in df_sess.columns or metric_y not in df_sess.columns:
+                ax.axis('off')
+                continue
+            
+            df_xy = df_sess[[metric_x, metric_y, 'active']].dropna()
+            if df_xy.empty:
+                ax.axis('off')
+                continue
+            
+            # Plot using seaborn regplot on the specific axis
+            for active_val in [False, True]:
+                df_xy_subset = df_xy[df_xy['active'] == active_val]
+                if df_xy_subset.empty:
+                    continue
+                
+                sns.regplot(
+                    data=df_xy_subset,
+                    x=metric_x,
+                    y=metric_y,
+                    scatter=True,
+                    ax=ax,
+                    color=palette_inter[active_val],
+                    label=f"{'Active' if active_val else 'Passive'}",
+                    scatter_kws={"alpha": 1, "s": 25, "edgecolor": "black", "linewidths": 0.5}
+                )
+            
+            # Rasterize scatter points
+            for collection in ax.collections:
+                if hasattr(collection, 'set_rasterized'):
+                    collection.set_rasterized(True)
+            
+            ax.set_xlabel(metric_x)
+            ax.set_ylabel(metric_y)
+            ax.set_title(f"{metric_base_x} vs {metric_base_y}")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+        
+        fig.suptitle(f"Session: {session} | {inter_area[0]} vs {inter_area[1]}", y=1.02)
+        plt.tight_layout()
+        
+        if SAVE_PLOTS:
+            output_dir = RESULTS_DIR
+            output_dir.mkdir(parents=True, exist_ok=True)
+            area_label = "_".join(inter_area)
+            out_name = f"{session}__{area_label}_inter_area.pdf".replace('/', '-')
+            fig.savefig(output_dir / out_name, format="pdf", bbox_inches="tight", dpi=300)
+            plt.close(fig)
+        else:
+            plt.show()

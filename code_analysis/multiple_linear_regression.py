@@ -1,4 +1,5 @@
 # %%
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -23,8 +24,13 @@ try:
 except NameError:
     _SCRIPT_DIR = Path.cwd()
 
-DATA_DIR = _SCRIPT_DIR.parent / "data"
-OUTPUT_DIR = _SCRIPT_DIR.parent / "results"
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
+
+DATA_DIR = config.DATA_DIR
+OUTPUT_DIR = config.results_dir("multiple_linear_regression")
 SAVE_PLOTS = True
 SHOW_PLOTS = True
 SHOW_STRIP = False

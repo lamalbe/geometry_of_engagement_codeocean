@@ -11,9 +11,10 @@ and passive fit separately) on the complementary onset window
 Same cohort, areas, 200-bin subsample_id chunks, session-level z-scoring, VIF
 flag, coefficient boxplots, R^2 boxes, and source→target heatmaps.
 
-Cache: clean_scripts/data/suppl_stats_onset_window.pk
-Figures / CSVs: clean_scripts/results/suppl_onset_channel_mlr_*
+Cache: data/suppl_stats_onset_window.pk
+Figures / CSVs: results/suppl_channel_mlr_onset/suppl_onset_channel_mlr_*
 """
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -26,15 +27,19 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy import stats
 from sklearn.linear_model import LinearRegression
 
-ALLEN_DATA_DIR = Path("/data/allen_engagement_data")
-
 try:
     _SCRIPT_DIR = Path(__file__).resolve().parent
 except NameError:
     _SCRIPT_DIR = Path.cwd()
 
-DATA_DIR = _SCRIPT_DIR.parent / "data"
-OUTPUT_DIR = _SCRIPT_DIR.parent / "results"
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
+
+ALLEN_DATA_DIR = config.ALLEN_PREPROCESSED_DIR
+DATA_DIR = config.DATA_DIR
+OUTPUT_DIR = config.results_dir("suppl_channel_mlr_onset")
 STATS_FILE = DATA_DIR / "suppl_stats_onset_window.pk"
 
 SAVE_PLOTS = True

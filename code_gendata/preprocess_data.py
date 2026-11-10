@@ -1,18 +1,30 @@
 # %%
 """Preprocess Allen Visual Behavior Neuropixels sessions into pickled dataframes.
 
-Raw Allen cache: /data/AllenNPXVisualBehavior
-Output:          /data/allen_engagement_data/{day1,day2}/<session_id>/
+Raw cache: config.ALLEN_RAW_DATA_DIR (default /data/AllenNPXVisualBehavior).
+Output:    config.ALLEN_PREPROCESSED_DIR / {day1,day2}/<session_id>/.
+The dataset is not included here. See config.py.
 """
 
 import gc
 import concurrent.futures
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from scipy import stats
+
+try:
+    _SCRIPT_DIR = Path(__file__).resolve().parent
+except NameError:
+    _SCRIPT_DIR = Path.cwd()
+
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
 
 from allensdk.brain_observatory.behavior.behavior_project_cache import (
     VisualBehaviorNeuropixelsProjectCache,
@@ -25,12 +37,12 @@ warnings.filterwarnings('ignore')
 # ------------------------
 # PATHS / HYPERPARAMETERS
 # ------------------------
-ALLEN_RAW_DIR = Path('/data/AllenNPXVisualBehavior')
+ALLEN_RAW_DIR = config.ALLEN_RAW_DATA_DIR
 # AllenSDK expects cache_dir/visual-behavior-neuropixels/{manifests,...}
-CACHE_PARENT_DIR = Path(__file__).resolve().parent.parent / 'data'
+CACHE_PARENT_DIR = config.ALLEN_CACHE_PARENT
 CACHE_LINK = CACHE_PARENT_DIR / 'visual-behavior-neuropixels'
 
-OUTPUT_DIR = Path('/data/allen_engagement_data')
+OUTPUT_DIR = config.ALLEN_PREPROCESSED_DIR
 DAY_SUBDIRS = {1: 'day1', 2: 'day2'}
 
 BINSIZE = 0.05  # 50 ms

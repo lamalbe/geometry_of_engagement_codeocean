@@ -4,19 +4,30 @@
 Day-1 Familiar sessions. Viewing bins use time_from_stimulus >= 0.1 s;
 omitted, novel, and change presentations dropped.
 
-Needs clean_scripts/data/df_behavior.pk (from suppl_behavior_session.py).
+Needs data/df_behavior.pk (from suppl_behavior_session.py).
 If df_unengagement_summary.pk and df_view_terciles.pk are missing, they are
-built first. Covariance tables are written to clean_scripts/data/.
+built first. Covariance tables are written to data/.
 """
 import json
 import multiprocessing
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-ALLEN_DATA_DIR = Path("/data/allen_engagement_data")
+try:
+    _SCRIPT_DIR = Path(__file__).resolve().parent
+except NameError:
+    _SCRIPT_DIR = Path.cwd()
+
+if str(_SCRIPT_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+
+import config
+
+ALLEN_DATA_DIR = config.ALLEN_PREPROCESSED_DIR
 TIME_FROM_STIMULUS_MIN = 0.1
 MAX_TIME = 60 * 60 + 20
 LICK_BIN_SEC = 1
@@ -28,12 +39,7 @@ UNENG_TIME = 12 * 60  # s; min overall unengaged time to label unengaged=True
 N_WORKERS = 4
 FORCE_REBUILD_BEHAVIOR_TABLES = False
 
-try:
-    _SCRIPT_DIR = Path(__file__).resolve().parent
-except NameError:
-    _SCRIPT_DIR = Path.cwd()
-
-DATA_DIR = _SCRIPT_DIR.parent / "data"
+DATA_DIR = config.DATA_DIR
 BEHAVIOR_FILE = DATA_DIR / "df_behavior.pk"
 UNENG_SUMMARY_FILE = DATA_DIR / "df_unengagement_summary.pk"
 VIEW_TERCILES_FILE = DATA_DIR / "df_view_terciles.pk"
